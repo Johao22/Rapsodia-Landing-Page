@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Live Ranking</title>
+  <style>
+    body { font-family: Arial; text-align: center; }
+    li { margin: 10px; font-size: 18px; }
+  </style>
+</head>
+<body>
+
+<h1>🔥 Ranking en Vivo</h1>
+<ul id="list"></ul>
+
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+<script>
+  const socket = io("https://TU_BACKEND_RAILWAY_URL");
+
+  socket.on("ranking_update", (data) => {
+    const list = document.getElementById("list");
+    list.innerHTML = "";
+
+    data.forEach((item, i) => {
+      const li = document.createElement("li");
+      li.innerText = `${i + 1}. ${item.user} - ${item.comment}`;
+      list.appendChild(li);
+    });
+  });
+</script>
+
+</body>
+</html>
