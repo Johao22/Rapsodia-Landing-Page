@@ -1,32 +1,678 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-  <title>Live Ranking</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rapsodia — Ranking en Vivo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    body { font-family: Arial; text-align: center; }
-    li { margin: 10px; font-size: 18px; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #06040f;
+      --surface:     #0f0d1a;
+      --surface2:    #16132a;
+      --gold:        #d4a017;
+      --gold-light:  #f5c842;
+      --silver:      #a8a9ad;
+      --bronze:      #b87333;
+      --purple:      #7c3aed;
+      --purple-light:#a855f7;
+      --text:        #f0edf8;
+      --muted:       #7b7691;
+      --border:      rgba(255,255,255,0.07);
+      --radius:      14px;
+    }
+
+    html, body {
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+    }
+
+    body {
+      background: radial-gradient(ellipse at 50% 0%, #1a0a3d 0%, #06040f 60%);
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      padding: 56px 24px 40px;
+    }
+
+    .logo-sub {
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 20px;
+      padding: 6px 18px;
+      border-radius: 100px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border: 1px solid transparent;
+      transition: all 0.4s;
+    }
+
+    .status-badge.connected    { background: rgba(34,197,94,0.1);  border-color: rgba(34,197,94,0.3);  color: #4ade80; }
+    .status-badge.connecting   { background: rgba(251,191,36,0.1); border-color: rgba(251,191,36,0.3); color: #fbbf24; }
+    .status-badge.disconnected { background: rgba(239,68,68,0.1);  border-color: rgba(239,68,68,0.3);  color: #f87171; }
+
+    .status-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .status-badge.connected .status-dot { animation: blink 2s infinite; }
+
+    @keyframes blink {
+      0%,100% { opacity: 1; }
+      50%      { opacity: 0.3; }
+    }
+
+    /* ── Main ── */
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 0 16px 80px;
+    }
+
+    /* ── Stats bar ── */
+    .stats-bar {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 32px;
+      margin-bottom: 40px;
+      flex-wrap: wrap;
+    }
+
+    .stat-item { text-align: center; }
+
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--gold-light);
+      display: block;
+      line-height: 1;
+    }
+
+    .stat-label {
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-top: 4px;
+      display: block;
+    }
+
+    .stats-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+
+    /* ── Section title ── */
+    .section-title {
+      font-size: 0.65rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 3px;
+      margin-bottom: 14px;
+      padding-left: 2px;
+    }
+
+    /* ── Podium ── */
+    .podium {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+
+    .podium-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px 14px 20px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.2s;
+      animation: fadeUp 0.5s ease both;
+    }
+
+    .podium-card:nth-child(1) { animation-delay: 0ms; }
+    .podium-card:nth-child(2) { animation-delay: 60ms; }
+    .podium-card:nth-child(3) { animation-delay: 120ms; }
+
+    .podium-card:hover { transform: translateY(-3px); }
+
+    .podium-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+    }
+
+    .podium-card.rank-1::before { background: linear-gradient(90deg, var(--gold), var(--gold-light)); }
+    .podium-card.rank-2::before { background: linear-gradient(90deg, #666, var(--silver)); }
+    .podium-card.rank-3::before { background: linear-gradient(90deg, #7a4a1e, var(--bronze)); }
+
+    .podium-card.rank-1 {
+      background: linear-gradient(160deg, #1c1500 0%, var(--surface) 70%);
+      border-color: rgba(212,160,23,0.2);
+      box-shadow: 0 0 50px rgba(212,160,23,0.06);
+    }
+
+    .podium-medal { font-size: 2.2rem; display: block; margin-bottom: 8px; }
+
+    .podium-rank {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .podium-username {
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--text);
+      word-break: break-all;
+      margin-bottom: 12px;
+    }
+
+    .podium-count {
+      display: inline-block;
+      padding: 4px 14px;
+      border-radius: 100px;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    .rank-1 .podium-count { background: rgba(212,160,23,0.14); color: var(--gold-light); border: 1px solid rgba(212,160,23,0.3); }
+    .rank-2 .podium-count { background: rgba(168,169,173,0.1); color: var(--silver);     border: 1px solid rgba(168,169,173,0.25); }
+    .rank-3 .podium-count { background: rgba(184,115,51,0.12); color: var(--bronze);     border: 1px solid rgba(184,115,51,0.25); }
+
+    /* ── Ranking list ── */
+    .ranking-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .ranking-row {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 20px;
+      transition: background 0.2s, border-color 0.2s;
+      animation: fadeUp 0.4s ease both;
+    }
+
+    .ranking-row:hover {
+      background: var(--surface2);
+      border-color: rgba(255,255,255,0.12);
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .row-rank {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: var(--muted);
+      width: 28px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .row-username {
+      flex: 1;
+      font-weight: 600;
+      font-size: 0.95rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .row-username::before {
+      content: "@";
+      color: var(--muted);
+      font-weight: 400;
+    }
+
+    .row-count {
+      background: rgba(124,58,237,0.13);
+      color: var(--purple-light);
+      border: 1px solid rgba(124,58,237,0.25);
+      padding: 3px 13px;
+      border-radius: 100px;
+      font-size: 0.76rem;
+      font-weight: 700;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+
+    /* ── Empty / Loading ── */
+    .empty-state {
+      text-align: center;
+      padding: 64px 24px;
+      color: var(--muted);
+    }
+
+    .empty-icon  { font-size: 3rem; margin-bottom: 16px; }
+    .empty-title { font-size: 1.1rem; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+    .empty-text  { font-size: 0.85rem; line-height: 1.6; }
+
+    .loading-state { text-align: center; padding: 56px 24px; }
+
+    .spinner {
+      width: 38px; height: 38px;
+      border: 3px solid rgba(212,160,23,0.15);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      margin: 0 auto 14px;
+      animation: spin 0.9s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Sorteo title ── */
+    .sorteo-title {
+      font-family: 'Playfair Display', serif;
+      font-size: clamp(1.4rem, 5vw, 2.4rem);
+      font-weight: 900;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #a0722a 0%, #f5c842 40%, #d4a017 70%, #a0722a 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 0 20px rgba(212,160,23,0.3));
+    }
+
+    /* ── Logo image ── */
+    .header-logo-img {
+      height: clamp(54px, 10vw, 80px);
+      width: auto;
+      display: block;
+      margin: 0 auto 10px;
+      filter: drop-shadow(0 0 24px rgba(212,160,23,0.35));
+    }
+
+    /* ── Gallery ── */
+    .gallery-section {
+      width: 100%;
+      overflow: hidden;
+      position: relative;
+      padding: 4px 0 32px;
+    }
+
+    .gallery-section::before,
+    .gallery-section::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 100px;
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    .gallery-section::before {
+      left: 0;
+      background: linear-gradient(to right, var(--bg), transparent);
+    }
+
+    .gallery-section::after {
+      right: 0;
+      background: linear-gradient(to left, var(--bg), transparent);
+    }
+
+    .gallery-track {
+      display: flex;
+      gap: 10px;
+      width: max-content;
+      animation: scroll-gallery 35s linear infinite;
+    }
+
+    .gallery-track:hover { animation-play-state: paused; }
+
+    .gallery-img {
+      height: 200px;
+      width: 300px;
+      object-fit: cover;
+      border-radius: 10px;
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      transition: transform 0.3s, border-color 0.3s;
+    }
+
+    .gallery-img:hover {
+      transform: scale(1.03);
+      border-color: rgba(212,160,23,0.4);
+    }
+
+    @keyframes scroll-gallery {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-50%); }
+    }
+
+    /* ── Prize banner ── */
+    .prize-banner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      max-width: 680px;
+      margin: 0 auto 40px;
+      padding: 18px 28px;
+      background: linear-gradient(135deg, rgba(212,160,23,0.08) 0%, rgba(124,58,237,0.08) 100%);
+      border: 1px solid rgba(212,160,23,0.25);
+      border-radius: var(--radius);
+      text-align: center;
+    }
+
+    .prize-icon { font-size: 1.8rem; flex-shrink: 0; }
+
+    .prize-banner p {
+      font-size: 0.92rem;
+      color: #d4c9f0;
+      line-height: 1.6;
+    }
+
+    .prize-banner strong { color: var(--gold-light); }
+
+    /* ── Social links ── */
+    .social-section {
+      display: flex;
+      justify-content: center;
+      gap: 28px;
+      margin-top: 28px;
+      flex-wrap: wrap;
+    }
+
+    .social-link {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      transition: color 0.2s, transform 0.2s;
+    }
+
+    .social-link:hover { color: var(--text); transform: translateY(-2px); }
+    .social-link:hover .social-icon-ig  { color: #e1306c; }
+    .social-link:hover .social-icon-tt  { color: #69c9d0; }
+    .social-link:hover .social-icon-yt  { color: #ff0000; }
+
+    .social-link svg { width: 20px; height: 20px; fill: currentColor; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      padding: 24px;
+      border-top: 1px solid var(--border);
+      margin-top: 40px;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .refresh-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 7px 20px;
+      border-radius: 100px;
+      cursor: pointer;
+      font-size: 0.75rem;
+      margin-top: 12px;
+      font-family: 'Inter', sans-serif;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    .refresh-btn:hover        { border-color: var(--gold); color: var(--gold); }
+    .refresh-btn:disabled     { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Responsive ── */
+    @media (max-width: 500px) {
+      .podium { grid-template-columns: 1fr; }
+      .stats-divider { display: none; }
+    }
   </style>
 </head>
 <body>
 
-<h1>🔥 Ranking en Vivo</h1>
-<ul id="list"></ul>
+<header>
+  <div class="sorteo-title">SORTEO RAPSODIA X FMS</div>
+  <img src="src/logo/rapso-logo-principal%20(1).png" class="header-logo-img" alt="Rapsodia">
+  <div class="logo-sub">Ranking de Comentarios en Vivo</div>
+  <div class="status-badge connecting" id="status-badge">
+    <span class="status-dot"></span>
+    <span id="status-text">Conectando...</span>
+  </div>
+</header>
 
-<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<div class="gallery-section">
+  <div class="gallery-track" id="gallery-track">
+    <img src="src/_MG_9459.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9462.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9503.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9575.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9584.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9589.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9643.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9718.jpg" class="gallery-img" alt="">
+    <!-- duplicado para loop sin corte -->
+    <img src="src/_MG_9459.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9462.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9503.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9575.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9584.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9589.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9643.jpg" class="gallery-img" alt="">
+    <img src="src/_MG_9718.jpg" class="gallery-img" alt="">
+  </div>
+</div>
 
+<div class="prize-banner">
+  <span class="prize-icon">🎟️</span>
+  <p>El usuario con mayor número de comentarios se llevará una <strong>entrada doble</strong> al torneo clasificatorio a <strong>FMS Perú</strong> este domingo</p>
+</div>
+
+<main>
+
+  <div class="stats-bar" id="stats-bar" style="display:none">
+    <div class="stat-item">
+      <span class="stat-value" id="stat-total">0</span>
+      <span class="stat-label">comentarios</span>
+    </div>
+    <div class="stats-divider"></div>
+    <div class="stat-item">
+      <span class="stat-value" id="stat-users">0</span>
+      <span class="stat-label">participantes</span>
+    </div>
+    <div class="stats-divider"></div>
+    <div class="stat-item">
+      <span class="stat-value" id="stat-time">—</span>
+      <span class="stat-label">actualizado</span>
+    </div>
+  </div>
+
+  <div id="content">
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <p style="color:var(--muted);font-size:0.85rem">Cargando ranking...</p>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  <div id="last-update"></div>
+  <button class="refresh-btn" id="refresh-btn">&#8635; Actualizar ahora</button>
+
+  <div class="social-section">
+    <!-- Instagram -->
+    <a href="https://www.instagram.com/rapsodia.peru" target="_blank" rel="noopener" class="social-link social-icon-ig">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/>
+      </svg>
+      @rapsodia.peru
+    </a>
+
+    <!-- TikTok -->
+    <a href="https://www.tiktok.com/@rapsodia.peru" target="_blank" rel="noopener" class="social-link social-icon-tt">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V8.69a8.18 8.18 0 0 0 4.78 1.52V6.75a4.85 4.85 0 0 1-1.01-.06z"/>
+      </svg>
+      @rapsodia.peru
+    </a>
+
+    <!-- YouTube -->
+    <a href="https://www.youtube.com/@RapsodiaPeru" target="_blank" rel="noopener" class="social-link social-icon-yt">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+      </svg>
+      Rapsodia Peru
+    </a>
+  </div>
+</footer>
+
+<script src="/socket.io/socket.io.js"></script>
 <script>
-  const socket = io("https://TU_BACKEND_RAILWAY_URL");
+  const socket = io();
 
-  socket.on("ranking_update", (data) => {
-    const list = document.getElementById("list");
-    list.innerHTML = "";
+  const statusBadge = document.getElementById("status-badge");
+  const statusText  = document.getElementById("status-text");
+  const contentEl   = document.getElementById("content");
+  const statsBar    = document.getElementById("stats-bar");
+  const refreshBtn  = document.getElementById("refresh-btn");
 
-    data.forEach((item, i) => {
-      const li = document.createElement("li");
-      li.innerText = `${i + 1}. ${item.user} - ${item.comment}`;
-      list.appendChild(li);
-    });
+  function setStatus(state) {
+    statusBadge.className = "status-badge " + state;
+    const labels = { connected: "En Vivo", connecting: "Conectando...", disconnected: "Desconectado" };
+    statusText.textContent = labels[state] || state;
+  }
+
+  socket.on("connect",       () => setStatus("connected"));
+  socket.on("disconnect",    () => setStatus("disconnected"));
+  socket.on("connect_error", () => setStatus("disconnected"));
+  socket.on("scrape_start",  () => { refreshBtn.disabled = true; refreshBtn.textContent = "↻ Actualizando..."; });
+
+  socket.on("ranking_update", ({ ranking, lastUpdate, total }) => {
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = "↻ Actualizar ahora";
+    renderRanking(ranking || []);
+    updateStats(ranking || [], total, lastUpdate);
   });
+
+  socket.on("scrape_error", () => {
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = "↻ Actualizar ahora";
+  });
+
+  refreshBtn.addEventListener("click", () => {
+    socket.emit("manual_refresh");
+    refreshBtn.disabled = true;
+    refreshBtn.textContent = "↻ Actualizando...";
+  });
+
+  function updateStats(ranking, total, lastUpdate) {
+    statsBar.style.display = "flex";
+    document.getElementById("stat-total").textContent = total || 0;
+    document.getElementById("stat-users").textContent = ranking.length;
+    if (lastUpdate) {
+      const d = new Date(lastUpdate);
+      document.getElementById("stat-time").textContent =
+        d.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" });
+      document.getElementById("last-update").textContent =
+        "Ultima actualizacion: " + d.toLocaleString("es-PE");
+    }
+  }
+
+  const MEDALS = ["", "🥇", "🥈", "🥉"];
+
+  function countLabel(n) {
+    return n + " " + (n === 1 ? "comentario" : "comentarios");
+  }
+
+  function escHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderPodiumCard(item, rank) {
+    return `<div class="podium-card rank-${rank}">
+      <span class="podium-medal">${MEDALS[rank]}</span>
+      <div class="podium-rank">#${rank}</div>
+      <div class="podium-username">${escHtml(item.user)}</div>
+      <span class="podium-count">${countLabel(item.count)}</span>
+    </div>`;
+  }
+
+  function renderRow(item, rank) {
+    return `<div class="ranking-row" style="animation-delay:${(rank - 4) * 30}ms">
+      <span class="row-rank">${rank}</span>
+      <span class="row-username">${escHtml(item.user)}</span>
+      <span class="row-count">${countLabel(item.count)}</span>
+    </div>`;
+  }
+
+  function renderRanking(data) {
+    if (!data.length) {
+      contentEl.innerHTML = `<div class="empty-state">
+        <div class="empty-icon">🎤</div>
+        <div class="empty-title">Sin datos aun</div>
+        <p class="empty-text">El ranking aparecera en cuanto se procesen<br>los comentarios del post.</p>
+      </div>`;
+      return;
+    }
+
+    const top3 = data.slice(0, 3);
+    const rest = data.slice(3);
+    let html = "";
+
+    html += `<p class="section-title">Podio</p><div class="podium">`;
+    top3.forEach((item, i) => { html += renderPodiumCard(item, i + 1); });
+    html += `</div>`;
+
+    if (rest.length) {
+      html += `<p class="section-title" style="margin-top:12px">Ranking completo</p>`;
+      html += `<div class="ranking-list">`;
+      rest.forEach((item, i) => { html += renderRow(item, i + 4); });
+      html += `</div>`;
+    }
+
+    contentEl.innerHTML = html;
+  }
 </script>
 
 </body>
