@@ -180,7 +180,7 @@ async function initBrowser() {
 }
 
 // ── Scrape (reutiliza el browser abierto) ───────────────────────────────────
-async function scrapeComments(url) {
+async function scrapeComments(url, fromCursor = null) {
   if (!browser || !page || page.isClosed()) await initBrowser();
 
   let apiDetails = null; // captura del primer response GraphQL
@@ -274,11 +274,6 @@ async function scrapeComments(url) {
     }
 
     const allComments = [];
-    let { comments, hasNextPage, endCursor } = extractPage(apiDetails.data);
-    allComments.push(...comments);
-    console.log(`Pagina 1: ${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
-
-    // Datos del request original para reutilizar
     const baseParams = new URLSearchParams(apiDetails.postData);
     const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
     const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
@@ -286,8 +281,24 @@ async function scrapeComments(url) {
     const wwwClaim   = apiDetails.reqHeaders["x-ig-www-claim"]   || "0";
     const ajaxHeader = apiDetails.reqHeaders["x-instagram-ajax"] || "1";
 
+    let hasNextPage, endCursor, pageNum;
+
+    if (fromCursor) {
+      // Modo incremental: saltar al cursor guardado, ignorar primera pagina
+      console.log("Modo incremental — reanudando desde cursor guardado");
+      hasNextPage = true;
+      endCursor   = fromCursor;
+      pageNum     = 1;
+    } else {
+      // Modo completo: usar primera pagina capturada por el scroll
+      let comments;
+      ({ comments, hasNextPage, endCursor } = extractPage(apiDetails.data));
+      allComments.push(...comments);
+      console.log(`Pagina 1: ${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
+      pageNum = 2;
+    }
+
     // ── Paginar via fetch directo desde el contexto del browser ─────────────
-    let pageNum = 2;
     while (hasNextPage && endCursor) {
       const vars = { ...baseVars, after: endCursor };
       const body = new URLSearchParams();
@@ -327,8 +338,8 @@ async function scrapeComments(url) {
       await sleep(300);
     }
 
-    console.log(`Total final: ${allComments.length} comentarios`);
-    return allComments;
+    console.log(`Total final: ${allComments.length} comentarios nuevos | ultimo cursor: ${endCursor ? "si" : "no"}`);
+    return { comments: allComments, lastCursor: endCursor };
 
   } finally {
     page.off("response", onResponse);
