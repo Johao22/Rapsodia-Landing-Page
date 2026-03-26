@@ -7,7 +7,9 @@ const IG_PASSWORD = process.env.IG_PASSWORD;
 const DESKTOP_UA  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep     = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleepRand = (min, max) => sleep(Math.floor(Math.random() * (max - min + 1)) + min);
+const MAX_PAGES = parseInt(process.env.MAX_PAGES || "60");
 
 // ── Estado persistente del browser ──────────────────────────────────────────
 let browser = null;
@@ -314,7 +316,8 @@ async function scrapeComments(url, fromCursor = null) {
 
     // ── Paginar via fetch directo desde el contexto del browser ─────────────
     let retries = 0;
-    while (hasNextPage && endCursor) {
+    let pagesThisRun = 0;
+    while (hasNextPage && endCursor && pagesThisRun < MAX_PAGES) {
       const vars = { ...baseVars, after: endCursor };
       const body = new URLSearchParams();
       body.set("variables", JSON.stringify(vars));
@@ -355,10 +358,21 @@ async function scrapeComments(url, fromCursor = null) {
       retries = 0;
       ({ comments, hasNextPage, endCursor } = extractPage(result));
       allComments.push(...comments);
+      pagesThisRun++;
       console.log(`Pagina ${pageNum}: +${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
       pageNum++;
 
-      await sleep(600);
+      // Pausa larga cada 20 paginas (simula lectura humana)
+      if (pagesThisRun % 20 === 0) {
+        console.log("Pausa larga...");
+        await sleepRand(4000, 8000);
+      } else {
+        await sleepRand(800, 2000);
+      }
+    }
+
+    if (pagesThisRun >= MAX_PAGES && hasNextPage) {
+      console.log(`Limite de ${MAX_PAGES} paginas alcanzado — continuara en el proximo intervalo`);
     }
 
     console.log(`Total final: ${allComments.length} comentarios nuevos | ultimo cursor: ${endCursor ? "si" : "no"}`);
