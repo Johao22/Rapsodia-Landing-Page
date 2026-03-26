@@ -6,7 +6,6 @@ const IG_USERNAME = process.env.IG_USERNAME;
 const IG_PASSWORD = process.env.IG_PASSWORD;
 const DESKTOP_UA  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
-const EXCLUDED    = new Set(["explore","accounts","reels","stories","direct","p","tv","meta","help","reel","about","privacy","terms"]);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -182,44 +181,31 @@ async function initBrowser() {
 
 // ── Scrape (reutiliza el browser abierto) ───────────────────────────────────
 async function scrapeComments(url) {
-  // Inicializar solo si no hay browser activo
-  if (!browser || !page || page.isClosed()) {
-    await initBrowser();
-  }
+  if (!browser || !page || page.isClosed()) await initBrowser();
 
-  const allComments = []; // acumula comentarios via GraphQL
+  let apiDetails = null; // captura del primer response GraphQL
 
-  // Interceptor GraphQL — se registra por scrape y se limpia al terminar
+  // Interceptor — solo para capturar la primera respuesta de comentarios
   const onResponse = async (response) => {
+    if (apiDetails) return;
     if (!response.url().includes("instagram.com/graphql")) return;
     try {
       const data = await response.json().catch(() => null);
-      if (!data?.data || typeof data.data !== "object") return;
-
-      console.log("GraphQL data.data keys:", Object.keys(data.data).join(", "));
-
-      function extractFromObj(obj) {
-        if (!obj || typeof obj !== "object") return;
-        if (typeof obj.text === "string" && obj.text.length > 0) {
-          const username = obj.user?.username || obj.owner?.username || obj.from?.username;
-          if (username) { allComments.push({ user: username, comment: obj.text }); return; }
-        }
-        if (Array.isArray(obj)) obj.forEach(extractFromObj);
-        else Object.values(obj).forEach(extractFromObj);
-      }
-
-      const before = allComments.length;
-      extractFromObj(data.data);
-      const found = allComments.length - before;
-      if (found > 0) console.log(`GraphQL +${found} | total ${allComments.length}`);
-      else console.log("GraphQL sin comentarios. Preview:", JSON.stringify(data.data).slice(0, 300));
+      if (!data?.data) return;
+      if (!Object.keys(data.data).some((k) => k.includes("comment"))) return;
+      const req = response.request();
+      apiDetails = {
+        url:        response.url(),
+        postData:   req.postData() || "",
+        reqHeaders: req.headers(),
+        data,
+      };
     } catch (_) {}
   };
 
   page.on("response", onResponse);
 
   try {
-    // Navegar al post (sesion ya activa, no hace falta login)
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(2000);
 
@@ -230,89 +216,114 @@ async function scrapeComments(url) {
         if (dismiss.some((d) => (btn.textContent || "").toLowerCase().includes(d))) btn.click();
       });
     });
-    await sleep(1500);
+    await sleep(1000);
 
     // Click "Ver los X comentarios"
-    const clicked = await page.evaluate(() => {
+    await page.evaluate(() => {
       const btn = [...document.querySelectorAll("a, button, span, [role='button']")].find((el) => {
         const t = (el.textContent || "").toLowerCase();
         return t.includes("ver los") || (t.includes("ver") && t.includes("comentario")) || (t.includes("view") && t.includes("comment"));
       });
-      if (btn) { btn.click(); return true; }
-      return false;
+      if (btn) btn.click();
     });
-    console.log("Click comentarios:", clicked);
-
     await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => {});
-    await sleep(2000);
+    await sleep(1500);
     console.log("URL comentarios:", page.url());
-    await page.screenshot({ path: "post_debug.png" });
 
-    // ── Scroll + acumulacion DOM ─────────────────────────────────────────────
-    const domAccumulated = new Map();
-    let domPrevKeys = new Set();
-    let domStable   = 0;
-    const client    = await page.target().createCDPSession();
-
-    for (let i = 0; i < 220; i++) {
-      // Extraer comentarios visibles
-      const batch = await page.evaluate((excl) => {
-        const results = [];
-        document.querySelectorAll('span[dir="auto"]').forEach((span) => {
-          const link  = span.querySelector('a[href]');
-          if (!link) return;
-          const match = (link.getAttribute("href") || "").match(/^\/([a-zA-Z0-9._]+)\/?$/);
-          if (!match || excl.includes(match[1])) return;
-          const username = match[1];
-          const full     = span.textContent.trim();
-          const comment  = full.startsWith(username) ? full.slice(username.length).trim() : full;
-          results.push({ user: username, comment: comment || "tagged" });
-        });
-        return results;
-      }, [...EXCLUDED]);
-
-      const currentKeys = new Set(batch.map(({ user, comment }) => `${user}::${comment}`));
-      let newFound = 0;
-      batch.forEach(({ user, comment }) => {
-        const key = `${user}::${comment}`;
-        if (!domPrevKeys.has(key)) { domAccumulated.set(key, { user, comment }); newFound++; }
-      });
-      domPrevKeys = currentKeys;
-
-      const spansBefore = await page.evaluate(() => document.querySelectorAll('span[dir="auto"]').length);
-
-      // Touch swipe
-      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
-      for (let s = 1; s <= 8; s++) {
-        await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 600 - s * 60, id: 0 }] });
-        await sleep(25);
-      }
-      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await sleep(900);
-
-      const spansAfter = await page.evaluate(() => document.querySelectorAll('span[dir="auto"]').length);
-      console.log(`Scroll ${i + 1}: +${newFound} | acum ${domAccumulated.size} | spans ${spansBefore}→${spansAfter}`);
-
-      if (spansAfter <= spansBefore && newFound === 0) { domStable++; if (domStable >= 6) break; } else domStable = 0;
+    // Un scroll para disparar la primera llamada GraphQL
+    const client = await page.target().createCDPSession();
+    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
+    for (let s = 1; s <= 8; s++) {
+      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 600 - s * 60, id: 0 }] });
+      await sleep(25);
     }
-
+    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await client.detach().catch(() => {});
 
-    // Combinar GraphQL + DOM
-    const domComments = Array.from(domAccumulated.values());
-    const combined    = [...allComments];
-    domComments.forEach(({ user, comment }) => {
-      if (!combined.some((c) => c.user === user && c.comment === comment)) combined.push({ user, comment });
-    });
+    // Esperar captura (max 12s)
+    for (let w = 0; w < 120 && !apiDetails; w++) await sleep(100);
+    if (!apiDetails) throw new Error("No se capturó la API GraphQL de comentarios");
 
-    console.log(`Total: ${combined.length} (GraphQL: ${allComments.length} + DOM: ${domComments.length})`);
-    return combined;
+    // ── Extraer comentarios y cursor de un response ──────────────────────────
+    function extractPage(data) {
+      const conn     = data?.data ? Object.values(data.data)[0] : null;
+      const comments = [];
+      let hasNextPage = false;
+      let endCursor   = null;
+
+      if (conn) {
+        (conn.edges || []).forEach(({ node }) => {
+          const username = node?.user?.username || node?.owner?.username;
+          const text     = node?.text;
+          if (username && text) comments.push({ user: username, comment: text });
+        });
+        hasNextPage = conn.page_info?.has_next_page ?? false;
+        endCursor   = conn.page_info?.end_cursor   ?? null;
+      }
+      return { comments, hasNextPage, endCursor };
+    }
+
+    const allComments = [];
+    let { comments, hasNextPage, endCursor } = extractPage(apiDetails.data);
+    allComments.push(...comments);
+    console.log(`Pagina 1: ${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
+
+    // Datos del request original para reutilizar
+    const baseParams = new URLSearchParams(apiDetails.postData);
+    const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
+    const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
+    const appId      = apiDetails.reqHeaders["x-ig-app-id"]      || "936619743392459";
+    const wwwClaim   = apiDetails.reqHeaders["x-ig-www-claim"]   || "0";
+    const ajaxHeader = apiDetails.reqHeaders["x-instagram-ajax"] || "1";
+
+    // ── Paginar via fetch directo desde el contexto del browser ─────────────
+    let pageNum = 2;
+    while (hasNextPage && endCursor) {
+      const vars = { ...baseVars, after: endCursor };
+      const body = new URLSearchParams();
+      body.set("variables", JSON.stringify(vars));
+      if (docId) body.set("doc_id", docId);
+
+      const result = await page.evaluate(async (fetchUrl, bodyStr, appId, wwwClaim, ajax) => {
+        const csrftoken = (document.cookie.split(";").find((c) => c.trim().startsWith("csrftoken=")) || "").split("=")[1] || "";
+        try {
+          const res = await fetch(fetchUrl, {
+            method: "POST",
+            headers: {
+              "content-type":     "application/x-www-form-urlencoded",
+              "x-ig-app-id":      appId,
+              "x-csrftoken":      csrftoken,
+              "x-ig-www-claim":   wwwClaim,
+              "x-instagram-ajax": ajax,
+              "x-requested-with": "XMLHttpRequest",
+            },
+            body: bodyStr,
+            credentials: "include",
+          });
+          return res.json();
+        } catch (_) { return null; }
+      }, apiDetails.url, body.toString(), appId, wwwClaim, ajaxHeader);
+
+      if (!result?.data) {
+        console.log(`Pagina ${pageNum}: sin datos, deteniendo`);
+        break;
+      }
+
+      ({ comments, hasNextPage, endCursor } = extractPage(result));
+      allComments.push(...comments);
+      console.log(`Pagina ${pageNum}: +${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
+      pageNum++;
+
+      await sleep(300);
+    }
+
+    console.log(`Total final: ${allComments.length} comentarios`);
+    return allComments;
 
   } finally {
-    // Quitar el listener para que no se acumule en el proximo scrape
     page.off("response", onResponse);
+    // NO se cierra el browser — se reutiliza en el siguiente scrape
   }
-  // NO se cierra el browser — se reutiliza en el siguiente scrape
 }
 
 module.exports = scrapeComments;
