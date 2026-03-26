@@ -230,19 +230,24 @@ async function scrapeComments(url) {
     await sleep(1500);
     console.log("URL comentarios:", page.url());
 
-    // Un scroll para disparar la primera llamada GraphQL
-    const client = await page.target().createCDPSession();
-    await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
-    for (let s = 1; s <= 8; s++) {
-      await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 600 - s * 60, id: 0 }] });
-      await sleep(25);
+    // Scrollear hasta capturar la primera llamada GraphQL (max 20s)
+    const client   = await page.target().createCDPSession();
+    const deadline = Date.now() + 20000;
+    while (!apiDetails && Date.now() < deadline) {
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
+      for (let s = 1; s <= 8; s++) {
+        await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 600 - s * 60, id: 0 }] });
+        await sleep(25);
+      }
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await sleep(1200);
     }
-    await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await client.detach().catch(() => {});
 
-    // Esperar captura (max 12s)
-    for (let w = 0; w < 120 && !apiDetails; w++) await sleep(100);
-    if (!apiDetails) throw new Error("No se capturó la API GraphQL de comentarios");
+    if (!apiDetails) {
+      console.log("URL actual:", page.url());
+      throw new Error("No se capturó la API GraphQL de comentarios");
+    }
 
     // ── Extraer comentarios y cursor de un response ──────────────────────────
     function extractPage(data) {
