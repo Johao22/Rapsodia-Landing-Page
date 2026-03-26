@@ -141,7 +141,12 @@ async function initBrowser() {
 
   if (process.env.IG_COOKIES) {
     try {
-      const cookies = JSON.parse(process.env.IG_COOKIES);
+      const valid = ["Strict", "Lax", "None"];
+      const cookies = JSON.parse(process.env.IG_COOKIES).map(c => {
+        const clean = { ...c };
+        if (!valid.includes(clean.sameSite)) delete clean.sameSite;
+        return clean;
+      });
       await page.setCookie(...cookies);
       console.log(`Sesion restaurada via cookies (${cookies.length} cookies)`);
     } catch (e) {
