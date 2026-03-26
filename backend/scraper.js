@@ -126,7 +126,17 @@ async function initBrowser() {
   browser = await puppeteer.launch({
     headless,
     executablePath: process.env.CHROME_PATH || puppeteer.executablePath(),
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+    protocolTimeout: 300_000,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+      "--disable-gpu",
+      "--no-zygote",
+      "--disable-extensions",
+      "--no-first-run",
+    ],
   });
 
   page = await browser.newPage();
@@ -244,7 +254,7 @@ async function scrapeComments(url) {
     let domStable   = 0;
     const client    = await page.target().createCDPSession();
 
-    for (let i = 0; i < 80; i++) {
+    for (let i = 0; i < 40; i++) {
       // Extraer comentarios visibles
       const batch = await page.evaluate((excl) => {
         const results = [];
