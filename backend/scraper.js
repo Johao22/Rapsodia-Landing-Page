@@ -313,6 +313,7 @@ async function scrapeComments(url, fromCursor = null) {
     }
 
     // ── Paginar via fetch directo desde el contexto del browser ─────────────
+    let retries = 0;
     while (hasNextPage && endCursor) {
       const vars = { ...baseVars, after: endCursor };
       const body = new URLSearchParams();
@@ -340,16 +341,24 @@ async function scrapeComments(url, fromCursor = null) {
       }, apiDetails.url, body.toString(), appId, wwwClaim, ajaxHeader);
 
       if (!result?.data) {
-        console.log(`Pagina ${pageNum}: sin datos, deteniendo`);
+        if (retries < 3) {
+          retries++;
+          const wait = retries * 4000;
+          console.log(`Pagina ${pageNum}: sin datos — esperando ${wait / 1000}s y reintentando (${retries}/3)...`);
+          await sleep(wait);
+          continue;
+        }
+        console.log(`Pagina ${pageNum}: sin datos tras 3 reintentos, deteniendo`);
         break;
       }
 
+      retries = 0;
       ({ comments, hasNextPage, endCursor } = extractPage(result));
       allComments.push(...comments);
       console.log(`Pagina ${pageNum}: +${comments.length} | total ${allComments.length} | more: ${hasNextPage}`);
       pageNum++;
 
-      await sleep(300);
+      await sleep(600);
     }
 
     console.log(`Total final: ${allComments.length} comentarios nuevos | ultimo cursor: ${endCursor ? "si" : "no"}`);
