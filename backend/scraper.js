@@ -206,7 +206,9 @@ async function scrapeComments(url) {
   page.on("response", onResponse);
 
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Navegar directo a la URL de comentarios
+    const commentsUrl = url.replace(/\/+$/, "") + "/comments/";
+    await page.goto(commentsUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(2000);
 
     // Descartar dialogs ocasionales
@@ -218,17 +220,11 @@ async function scrapeComments(url) {
     });
     await sleep(1000);
 
-    // Click "Ver los X comentarios"
-    await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("a, button, span, [role='button']")].find((el) => {
-        const t = (el.textContent || "").toLowerCase();
-        return t.includes("ver los") || (t.includes("ver") && t.includes("comentario")) || (t.includes("view") && t.includes("comment"));
-      });
-      if (btn) btn.click();
-    });
-    await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 8000 }).catch(() => {});
-    await sleep(1500);
-    console.log("URL comentarios:", page.url());
+    const currentUrl = page.url();
+    console.log("URL comentarios:", currentUrl);
+    if (!currentUrl.includes("/p/")) {
+      throw new Error(`Sesion invalida — redirigido a ${currentUrl}. Renovar IG_COOKIES.`);
+    }
 
     // Scrollear hasta capturar la primera llamada GraphQL (max 20s)
     const client   = await page.target().createCDPSession();
