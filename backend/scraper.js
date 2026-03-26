@@ -139,7 +139,17 @@ async function initBrowser() {
   await page.setUserAgent(DESKTOP_UA);
   await page.setViewport({ width: 1280, height: 900 });
 
-  if (IG_USERNAME && IG_PASSWORD) await login();
+  if (process.env.IG_COOKIES) {
+    try {
+      const cookies = JSON.parse(process.env.IG_COOKIES);
+      await page.setCookie(...cookies);
+      console.log(`Sesion restaurada via cookies (${cookies.length} cookies)`);
+    } catch (e) {
+      console.error("Error al cargar IG_COOKIES:", e.message);
+    }
+  } else if (IG_USERNAME && IG_PASSWORD) {
+    await login();
+  }
 
   // Cambiar a mobile para scraping
   await page.setUserAgent(MOBILE_UA);
