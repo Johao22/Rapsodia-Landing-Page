@@ -254,7 +254,7 @@ async function scrapeComments(url) {
     let domStable   = 0;
     const client    = await page.target().createCDPSession();
 
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 220; i++) {
       // Extraer comentarios visibles
       const batch = await page.evaluate((excl) => {
         const results = [];
@@ -288,7 +288,7 @@ async function scrapeComments(url) {
         await sleep(25);
       }
       await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-      await sleep(2000);
+      await sleep(900);
 
       const spansAfter = await page.evaluate(() => document.querySelectorAll('span[dir="auto"]').length);
       console.log(`Scroll ${i + 1}: +${newFound} | acum ${domAccumulated.size} | spans ${spansBefore}→${spansAfter}`);
