@@ -125,7 +125,7 @@ async function initBrowser() {
 
   browser = await puppeteer.launch({
     headless,
-    executablePath: process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    executablePath: process.env.CHROME_PATH || puppeteer.executablePath(),
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
   });
 
