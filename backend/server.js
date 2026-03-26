@@ -75,7 +75,6 @@ setTimeout(runScrape, 3000);
 cron.schedule(`*/${INTERVAL} * * * *`, runScrape);
 
 io.on("connection", (socket) => {
-  console.log(`Cliente conectado: ${socket.id}`);
   // Enviar estado actual al nuevo cliente
   socket.emit("ranking_update", { ranking, lastUpdate, total: totalComments });
 
@@ -84,9 +83,7 @@ io.on("connection", (socket) => {
     runScrape();
   });
 
-  socket.on("disconnect", () => {
-    console.log(`Cliente desconectado: ${socket.id}`);
-  });
+  socket.on("disconnect", () => {});
 });
 
 // REST endpoints como fallback
