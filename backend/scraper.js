@@ -227,10 +227,23 @@ async function scrapeComments(url, fromCursor = null) {
     });
     await sleep(800);
 
-    // Paso 2: navegar a /comments/ via client-side (dispara GraphQL)
-    const commentsUrl = url.replace(/\/+$/, "") + "/comments/";
-    await page.evaluate((u) => { window.location.href = u; }, commentsUrl);
-    await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    // Paso 2: click en "ver comentarios" para activar el SPA router (dispara GraphQL)
+    const clicked = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll("a, button, span, [role='button']")].find((el) => {
+        const t = (el.textContent || "").toLowerCase();
+        return t.includes("ver los") || (t.includes("ver") && t.includes("comentario")) || (t.includes("view") && t.includes("comment"));
+      });
+      if (btn) { btn.click(); return true; }
+      return false;
+    });
+
+    if (clicked) {
+      await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    } else {
+      // Fallback: push state via history API (mantiene el SPA router)
+      const commentsUrl = url.replace(/\/+$/, "") + "/comments/";
+      await page.evaluate((u) => { history.pushState({}, "", u); window.dispatchEvent(new PopStateEvent("popstate")); }, commentsUrl);
+    }
     await sleep(1500);
 
     console.log("URL comentarios:", page.url());
