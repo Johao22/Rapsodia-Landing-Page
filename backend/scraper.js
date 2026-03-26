@@ -265,7 +265,8 @@ async function scrapeComments(url, fromCursor = null) {
         (conn.edges || []).forEach(({ node }) => {
           const username = node?.user?.username || node?.owner?.username;
           const text     = node?.text;
-          if (username && text) comments.push({ user: username, comment: text });
+          const id       = node?.id || node?.pk;
+          if (username && text) comments.push({ id, user: username, comment: text });
         });
         hasNextPage = conn.page_info?.has_next_page ?? false;
         endCursor   = conn.page_info?.end_cursor   ?? null;

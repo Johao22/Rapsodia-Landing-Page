@@ -28,11 +28,14 @@ let totalComments    = 0;
 let isScrapingActive = false;
 
 // ── Store persistente ────────────────────────────────────────────────────────
-let store = { userCounts: {}, lastCursor: null };
+let store = { userCounts: {}, lastCursor: null, seenIds: [] };
 
 function loadStore() {
   try {
-    store = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
+    const saved = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
+    // migrar stores viejos que no tienen seenIds
+    store = { userCounts: {}, lastCursor: null, seenIds: [], ...saved };
+    if (!Array.isArray(store.seenIds)) store.seenIds = [];
     buildRanking();
     console.log(`Store cargado: ${Object.keys(store.userCounts).length} usuarios | cursor: ${store.lastCursor ? "si" : "no"}`);
   } catch (_) {
@@ -69,12 +72,23 @@ function buildRanking() {
 }
 
 function mergeComments(newComments, isFullScrape) {
-  if (isFullScrape) store.userCounts = {}; // reemplazar en scrape completo
+  if (isFullScrape) { store.userCounts = {}; store.seenIds = []; }
+  const seenSet = new Set(store.seenIds);
+  let added = 0;
+
   newComments.forEach((c) => {
-    if (!c.user || !c.comment || c.comment.trim().length < 3) return;
-    const user = c.user.trim();
-    store.userCounts[user] = (store.userCounts[user] || 0) + 1;
+    if (!c.user || !c.comment || !c.comment.trim()) return;
+    // deduplicar por ID si está disponible
+    if (c.id) {
+      if (seenSet.has(c.id)) return;
+      seenSet.add(c.id);
+    }
+    store.userCounts[c.user.trim()] = (store.userCounts[c.user.trim()] || 0) + 1;
+    added++;
   });
+
+  store.seenIds = [...seenSet];
+  console.log(`Comentarios nuevos procesados: ${added} | usuarios unicos: ${Object.keys(store.userCounts).length}`);
   buildRanking();
 }
 
