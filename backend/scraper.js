@@ -185,14 +185,16 @@ async function scrapeComments(url) {
 
   let apiDetails = null; // captura del primer response GraphQL
 
-  // Interceptor — solo para capturar la primera respuesta de comentarios
+  // Interceptor — captura la primera respuesta GraphQL de comentarios
   const onResponse = async (response) => {
-    if (apiDetails) return;
     if (!response.url().includes("instagram.com/graphql")) return;
     try {
       const data = await response.json().catch(() => null);
       if (!data?.data) return;
-      if (!Object.keys(data.data).some((k) => k.includes("comment"))) return;
+      const keys = Object.keys(data.data);
+      console.log("GraphQL keys:", keys.join(", "));
+      if (apiDetails) return; // ya capturado
+      if (!keys.some((k) => k.includes("comment"))) return;
       const req = response.request();
       apiDetails = {
         url:        response.url(),
@@ -200,31 +202,38 @@ async function scrapeComments(url) {
         reqHeaders: req.headers(),
         data,
       };
+      console.log("API capturada:", keys.join(", "));
     } catch (_) {}
   };
 
   page.on("response", onResponse);
 
   try {
-    // Navegar directo a la URL de comentarios
-    const commentsUrl = url.replace(/\/+$/, "") + "/comments/";
-    await page.goto(commentsUrl, { waitUntil: "domcontentloaded", timeout: 30000 });
+    // Paso 1: cargar el post (server-side)
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(2000);
 
-    // Descartar dialogs ocasionales
+    // Verificar sesion
+    if (!page.url().includes("/p/")) {
+      throw new Error(`Sesion invalida — redirigido a ${page.url()}. Renovar IG_COOKIES.`);
+    }
+
+    // Descartar dialogs
     await page.evaluate(() => {
       const dismiss = ["not now", "ahora no", "maybe later", "skip", "cancel", "omitir"];
       document.querySelectorAll("button, [role='button']").forEach((btn) => {
         if (dismiss.some((d) => (btn.textContent || "").toLowerCase().includes(d))) btn.click();
       });
     });
-    await sleep(1000);
+    await sleep(800);
 
-    const currentUrl = page.url();
-    console.log("URL comentarios:", currentUrl);
-    if (!currentUrl.includes("/p/")) {
-      throw new Error(`Sesion invalida — redirigido a ${currentUrl}. Renovar IG_COOKIES.`);
-    }
+    // Paso 2: navegar a /comments/ via client-side (dispara GraphQL)
+    const commentsUrl = url.replace(/\/+$/, "") + "/comments/";
+    await page.evaluate((u) => { window.location.href = u; }, commentsUrl);
+    await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
+    await sleep(1500);
+
+    console.log("URL comentarios:", page.url());
 
     // Scrollear hasta capturar la primera llamada GraphQL (max 20s)
     const client   = await page.target().createCDPSession();
