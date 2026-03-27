@@ -28,14 +28,12 @@ let totalComments    = 0;
 let isScrapingActive = false;
 
 // ── Store persistente ────────────────────────────────────────────────────────
-let store = { userCounts: {}, lastCursor: null, seenIds: [] };
+let store = { userCounts: {}, lastCursor: null };
 
 function loadStore() {
   try {
     const saved = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-    // migrar stores viejos que no tienen seenIds
-    store = { userCounts: {}, lastCursor: null, seenIds: [], ...saved };
-    if (!Array.isArray(store.seenIds)) store.seenIds = [];
+    store = { userCounts: {}, lastCursor: null, ...saved };
     buildRanking();
     console.log(`Store cargado: ${Object.keys(store.userCounts).length} usuarios | cursor: ${store.lastCursor ? "si" : "no"}`);
   } catch (_) {
@@ -72,23 +70,17 @@ function buildRanking() {
 }
 
 function mergeComments(newComments, isFullScrape) {
-  if (isFullScrape) { store.userCounts = {}; store.seenIds = []; }
-  const seenSet = new Set(store.seenIds);
+  if (isFullScrape) store.userCounts = {};
+
   let added = 0;
 
   newComments.forEach((c) => {
     if (!c.user || !c.comment || !c.comment.trim()) return;
-    // deduplicar por ID si está disponible
-    if (c.id) {
-      if (seenSet.has(c.id)) return;
-      seenSet.add(c.id);
-    }
     store.userCounts[c.user.trim()] = (store.userCounts[c.user.trim()] || 0) + 1;
     added++;
   });
 
-  store.seenIds = [...seenSet];
-  console.log(`Comentarios nuevos procesados: ${added} | usuarios unicos: ${Object.keys(store.userCounts).length}`);
+  console.log(`Procesados: ${added} nuevos | usuarios unicos acumulados: ${Object.keys(store.userCounts).length}`);
   buildRanking();
 }
 
