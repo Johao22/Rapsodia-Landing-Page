@@ -276,7 +276,7 @@ async function scrapeComments(url, fromCursor = null) {
     "x-instagram-ajax": api.reqHeaders["x-instagram-ajax"] || "1",
     "x-requested-with": "XMLHttpRequest",
     "user-agent":       MOBILE_UA,
-    "referer":          url,
+    "referer":          url.trim().replace(/[\r\n\t]/g, ""),
   };
 
   const allComments = [];
