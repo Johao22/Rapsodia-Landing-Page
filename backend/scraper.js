@@ -299,7 +299,11 @@ async function fetchAllReplies(headers, replyHost, commentId) {
 }
 
 // ── Scrape principal ──────────────────────────────────────────────────────────
-async function scrapeComments(url, fromCursor = null) {
+// onBatch(comments, cursor) se llama cada CHECKPOINT_PAGES páginas con comentarios nuevos
+// Permite guardar progreso sin esperar al final del scrape completo
+const CHECKPOINT_PAGES = 50;
+
+async function scrapeComments(url, fromCursor = null, onBatch = null) {
   if (!browser || !page || page.isClosed()) await initBrowser();
 
   const api = await captureApiDetails(url);
@@ -332,20 +336,35 @@ async function scrapeComments(url, fromCursor = null) {
   };
 
   const allComments       = [];
+  const batchBuffer       = [];
   const pendingRepliesSet = new Set();
   let hasNextPage, endCursor, pageNum;
+  let pagesSinceCheckpoint = 0;
+
+  // Adds to batchBuffer (onBatch mode) or allComments (direct mode)
+  const stash = (cmts) => { if (onBatch) batchBuffer.push(...cmts); else allComments.push(...cmts); };
+
+  // Flush batchBuffer via onBatch callback
+  const flush = async (cursor) => {
+    if (!onBatch || batchBuffer.length === 0) return;
+    await onBatch([...batchBuffer], cursor);
+    batchBuffer.length = 0;
+    pagesSinceCheckpoint = 0;
+  };
 
   if (fromCursor) {
     console.log("Modo incremental — reanudando desde cursor guardado");
     hasNextPage = true; endCursor = fromCursor; pageNum = 1;
   } else {
     const first = parsePage(api.data);
-    allComments.push(...first.comments);
+    stash(first.comments);
     first.pendingReplies.forEach((id) => pendingRepliesSet.add(id));
     hasNextPage = first.hasNextPage;
     endCursor   = first.endCursor;
-    console.log(`Pag 1: +${first.comments.length} | total ${allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
+    console.log(`Pag 1: +${first.comments.length} | total ${onBatch ? batchBuffer.length : allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
     pageNum = 2;
+    pagesSinceCheckpoint++;
+    if (pagesSinceCheckpoint >= CHECKPOINT_PAGES) await flush(endCursor);
   }
 
   let retries      = 0;
@@ -367,25 +386,30 @@ async function scrapeComments(url, fromCursor = null) {
     }
     retries = 0;
     const pg = parsePage(result);
-    allComments.push(...pg.comments);
+    stash(pg.comments);
     pg.pendingReplies.forEach((id) => pendingRepliesSet.add(id));
     hasNextPage = pg.hasNextPage;
     endCursor   = pg.endCursor;
     pagesThisRun++;
+    pagesSinceCheckpoint++;
 
     if (pagesThisRun % 50 === 0 || !hasNextPage)
-      console.log(`Pag ${pageNum}: +${pg.comments.length} | total ${allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
+      console.log(`Pag ${pageNum}: +${pg.comments.length} | acum: ${onBatch ? "(batched)" : allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
     pageNum++;
+
+    if (pagesSinceCheckpoint >= CHECKPOINT_PAGES) await flush(endCursor);
 
     await (pagesThisRun % 20 === 0 ? sleepRand(5000, 9000) : sleepRand(700, 1600));
   }
 
+  // Flush any remaining top-level comments before Phase 2
+  await flush(endCursor);
+
   const pendingArray = [...pendingRepliesSet];
-  console.log(`\nFase 1 completa: ${allComments.length} comentarios top-level | ${pendingArray.length} con replies (child_comment_count > 0)`);
+  console.log(`\nFase 1 completa | ${pendingArray.length} con replies (child_comment_count > 0)`);
 
   // ── Fase 2: replies (solo si hay comentarios con replies) ─────────────────
   if (pendingArray.length > 0) {
-    // Probar qué endpoint de replies funciona con la sesión actual
     const { host: replyHost, works } = await probeReplyEndpoint(restHeaders, pendingArray[0]);
 
     if (!works) {
@@ -397,20 +421,23 @@ async function scrapeComments(url, fromCursor = null) {
 
       for (const commentId of pendingArray) {
         const replies = await fetchAllReplies(restHeaders, replyHost, commentId);
-        allComments.push(...replies);
+        stash(replies);
         totalReplies += replies.length;
         done++;
         if (done % 25 === 0 || done === pendingArray.length)
-          console.log(`Replies: ${done}/${pendingArray.length} | replies: ${totalReplies} | total: ${allComments.length}`);
+          console.log(`Replies: ${done}/${pendingArray.length} | replies: ${totalReplies}`);
         if (done % 100 === 0) await sleepRand(8000, 15000);
         else await sleepRand(300, 700);
       }
-      console.log(`Fase 2 completa: ${totalReplies} replies | total final: ${allComments.length}`);
+      // Flush remaining replies
+      await flush(endCursor);
+      console.log(`Fase 2 completa: ${totalReplies} replies`);
     }
   }
 
-  console.log(`\n=== TOTAL FINAL: ${allComments.length} comentarios | cursor: ${endCursor ? "si" : "no"} ===`);
-  return { comments: allComments, lastCursor: endCursor };
+  const total = onBatch ? "(guardado via checkpoints)" : allComments.length;
+  console.log(`\n=== TOTAL FINAL: ${total} comentarios | cursor: ${endCursor ? "si" : "no"} ===`);
+  return { comments: onBatch ? [] : allComments, lastCursor: endCursor };
 }
 
 module.exports = scrapeComments;

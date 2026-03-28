@@ -100,11 +100,30 @@ async function runScrape() {
   const mode = isFullScrape ? "completo" : "incremental";
   console.log(`[${new Date().toLocaleTimeString()}] Scraping ${POST_URL} (${mode})...`);
 
-  try {
-    const { comments, lastCursor } = await scrapeComments(POST_URL, store.lastCursor);
-    console.log(`Obtenidos ${comments.length} comentarios nuevos`);
+  // Para scrape completo, resetear store ANTES de empezar para no mezclar con datos viejos
+  if (isFullScrape) {
+    store.userCounts = {};
+    store.seenIds    = {};
+    saveStore();
+  }
 
-    mergeComments(comments, isFullScrape);
+  // Callback de checkpoint: se llama cada CHECKPOINT_PAGES páginas con comentarios nuevos
+  const onBatch = async (batch, cursor) => {
+    mergeComments(batch, false);
+    if (cursor) store.lastCursor = cursor;
+    saveStore();
+    saveCSV();
+    io.emit("ranking_update", { ranking, lastUpdate, total: totalComments });
+    console.log(`[checkpoint] ${ranking.length} usuarios | ${totalComments} comentarios acumulados`);
+  };
+
+  try {
+    const { comments, lastCursor } = await scrapeComments(POST_URL, store.lastCursor, onBatch);
+
+    // Si onBatch no fue llamado (run muy corto), procesar comentarios restantes
+    if (comments.length > 0) {
+      mergeComments(comments, false);
+    }
 
     if (lastCursor) store.lastCursor = lastCursor;
     saveStore();
