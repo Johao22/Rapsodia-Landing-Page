@@ -28,12 +28,12 @@ let totalComments    = 0;
 let isScrapingActive = false;
 
 // ── Store persistente ────────────────────────────────────────────────────────
-let store = { userCounts: {}, lastCursor: null };
+let store = { userCounts: {}, lastCursor: null, seenIds: {} };
 
 function loadStore() {
   try {
     const saved = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-    store = { userCounts: {}, lastCursor: null, ...saved };
+    store = { userCounts: {}, lastCursor: null, seenIds: {}, ...saved };
     buildRanking();
     console.log(`Store cargado: ${Object.keys(store.userCounts).length} usuarios | cursor: ${store.lastCursor ? "si" : "no"}`);
   } catch (_) {
@@ -70,17 +70,22 @@ function buildRanking() {
 }
 
 function mergeComments(newComments, isFullScrape) {
-  if (isFullScrape) store.userCounts = {};
+  if (isFullScrape) { store.userCounts = {}; store.seenIds = {}; }
 
   let added = 0;
+  let dupes  = 0;
 
   newComments.forEach((c) => {
     if (!c.user || !c.comment || !c.comment.trim()) return;
+    if (c.id) {
+      if (store.seenIds[c.id]) { dupes++; return; }
+      store.seenIds[c.id] = 1;
+    }
     store.userCounts[c.user.trim()] = (store.userCounts[c.user.trim()] || 0) + 1;
     added++;
   });
 
-  console.log(`Procesados: ${added} nuevos | usuarios unicos acumulados: ${Object.keys(store.userCounts).length}`);
+  console.log(`Procesados: ${added} nuevos | ${dupes} duplicados omitidos | usuarios unicos acumulados: ${Object.keys(store.userCounts).length}`);
   buildRanking();
 }
 
