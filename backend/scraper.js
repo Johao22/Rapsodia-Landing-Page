@@ -219,33 +219,50 @@ async function captureApiDetails(url) {
 
     if (!apiDetails) { await client.detach().catch(() => {}); throw new Error("No se capturó la API GraphQL de comentarios"); }
 
-    // Si aun no tenemos la API de replies, intentar hacer click en "ver respuestas"
+    // Intentar capturar la API de replies tapeando el boton "ver respuestas"
     if (!replyApiDetails) {
-      const replyClicked = await page.evaluate(() => {
-        const els = [...document.querySelectorAll("span, button, div")];
-        const btn = els.find((el) => {
-          const t = (el.textContent || "").toLowerCase();
-          return (t.includes("respuesta") || t.includes("repl")) && el.offsetParent !== null;
-        });
-        if (btn) { btn.click(); return true; }
-        return false;
-      });
-      if (replyClicked) {
-        await sleep(3000);
-        console.log(replyApiDetails ? "API replies capturada via click" : "Click en replies sin resultado");
-      }
-    }
+      await sleep(2500); // Dar tiempo al DOM para renderizar los comentarios
 
-    // Si aun no tenemos replies, hacer scroll adicional para que Instagram cargue algunas
-    if (!replyApiDetails) {
-      for (let i = 0; i < 5 && !replyApiDetails; i++) {
-        await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
-        for (let s = 1; s <= 8; s++) {
-          await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 600 - s * 60, id: 0 }] });
-          await sleep(25);
+      for (let attempt = 0; attempt < 5 && !replyApiDetails; attempt++) {
+        // Buscar nodos de texto que coincidan con patrones de boton de replies
+        const coords = await page.evaluate(() => {
+          const found = [];
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) {
+            const t = (node.textContent || "").trim();
+            if (t.length < 3 || t.length > 60) continue;
+            if (!/(\d+\s*(respuesta|repl|reply))/i.test(t) && !/^(ver|view)\s*(respuesta|repl|reply)/i.test(t)) continue;
+            const el = node.parentElement;
+            if (!el) continue;
+            const rect = el.getBoundingClientRect();
+            if (rect.width > 5 && rect.height > 5 && rect.top > 60 && rect.top < window.innerHeight - 60) {
+              found.push({ x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), text: t });
+              if (found.length >= 3) break;
+            }
+          }
+          return found;
+        });
+
+        if (coords.length > 0) {
+          for (const { x, y, text } of coords) {
+            console.log(`Tapeando boton replies: "${text}" en (${x}, ${y})`);
+            await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 0 }] });
+            await sleep(120);
+            await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+            await sleep(2500);
+            if (replyApiDetails) break;
+          }
+        } else {
+          // No hay botones visibles — hacer scroll para revelar mas comentarios
+          await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 700, id: 0 }] });
+          for (let s = 1; s <= 10; s++) {
+            await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 700 - s * 55, id: 0 }] });
+            await sleep(25);
+          }
+          await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+          await sleep(2000);
         }
-        await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-        await sleep(1500);
       }
     }
 
