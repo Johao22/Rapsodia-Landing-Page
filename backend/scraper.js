@@ -15,7 +15,7 @@ const MAX_PAGES = parseInt(process.env.MAX_PAGES || "0"); // 0 = sin limite
 let browser = null;
 let page    = null;
 
-// ── HTTP POST desde Node.js (sin browser, sin limite de memoria) ─────────────
+// ── HTTP POST (GraphQL) ───────────────────────────────────────────────────────
 function nodePost(url, headers, body) {
   return new Promise((resolve) => {
     const u = new URL(url);
@@ -37,6 +37,29 @@ function nodePost(url, headers, body) {
     );
     req.on("error", () => resolve(null));
     req.write(body);
+    req.end();
+  });
+}
+
+// ── HTTP GET (REST API) ───────────────────────────────────────────────────────
+function nodeGet(hostname, path, headers) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      { hostname, path, method: "GET", headers },
+      (res) => {
+        // Seguir redirecciones simples
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return resolve(null);
+        }
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
+          catch (_) { resolve(null); }
+        });
+      }
+    );
+    req.on("error", () => resolve(null));
     req.end();
   });
 }
@@ -145,29 +168,21 @@ async function initBrowser() {
   console.log("Browser listo y sesion activa");
 }
 
-// ── Navegar al post y capturar detalles de las APIs GraphQL ──────────────────
+// ── Capturar API GraphQL de comentarios top-level ────────────────────────────
 async function captureApiDetails(url) {
-  let apiDetails   = null;
-  let replyApiDetails = null;
+  let apiDetails = null;
 
   const onResponse = async (response) => {
-    if (!response.url().includes("instagram.com/graphql")) return;
+    if (apiDetails || !response.url().includes("instagram.com/graphql")) return;
     try {
       const data = await response.json().catch(() => null);
       if (!data?.data) return;
       const keys = Object.keys(data.data);
-      const req  = response.request();
-
-      // API de comentarios top-level (no replies)
-      if (!apiDetails && keys.some((k) => k.includes("comment") && !k.includes("repl"))) {
-        apiDetails = { url: response.url(), postData: req.postData() || "", reqHeaders: req.headers(), data };
-        console.log("API comentarios capturada:", keys.join(", "));
-      }
-      // API de replies
-      if (!replyApiDetails && keys.some((k) => k.includes("repl"))) {
-        replyApiDetails = { url: response.url(), postData: req.postData() || "" };
-        console.log("API replies capturada:", keys.join(", "));
-      }
+      // Solo la API de comentarios top-level (no replies)
+      if (!keys.some((k) => k.includes("comment") && !k.includes("repl"))) return;
+      const req = response.request();
+      apiDetails = { url: response.url(), postData: req.postData() || "", reqHeaders: req.headers(), data };
+      console.log("API capturada:", keys.join(", "));
     } catch (_) {}
   };
 
@@ -216,97 +231,48 @@ async function captureApiDetails(url) {
       await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await sleep(1200);
     }
-
-    if (!apiDetails) { await client.detach().catch(() => {}); throw new Error("No se capturó la API GraphQL de comentarios"); }
-
-    // Intentar capturar la API de replies tapeando el boton "ver respuestas"
-    if (!replyApiDetails) {
-      await sleep(2500); // Dar tiempo al DOM para renderizar los comentarios
-
-      for (let attempt = 0; attempt < 5 && !replyApiDetails; attempt++) {
-        // Buscar nodos de texto que coincidan con patrones de boton de replies
-        const coords = await page.evaluate(() => {
-          const found = [];
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          let node;
-          while ((node = walker.nextNode())) {
-            const t = (node.textContent || "").trim();
-            if (t.length < 3 || t.length > 60) continue;
-            if (!/(\d+\s*(respuesta|repl|reply))/i.test(t) && !/^(ver|view)\s*(respuesta|repl|reply)/i.test(t)) continue;
-            const el = node.parentElement;
-            if (!el) continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.width > 5 && rect.height > 5 && rect.top > 60 && rect.top < window.innerHeight - 60) {
-              found.push({ x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2), text: t });
-              if (found.length >= 3) break;
-            }
-          }
-          return found;
-        });
-
-        if (coords.length > 0) {
-          for (const { x, y, text } of coords) {
-            console.log(`Tapeando boton replies: "${text}" en (${x}, ${y})`);
-            await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 0 }] });
-            await sleep(120);
-            await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-            await sleep(2500);
-            if (replyApiDetails) break;
-          }
-        } else {
-          // No hay botones visibles — hacer scroll para revelar mas comentarios
-          await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 700, id: 0 }] });
-          for (let s = 1; s <= 10; s++) {
-            await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: 195, y: 700 - s * 55, id: 0 }] });
-            await sleep(25);
-          }
-          await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-          await sleep(2000);
-        }
-      }
-    }
-
     await client.detach().catch(() => {});
 
-    if (!replyApiDetails) console.log("AVISO: API de replies no capturada — solo se procesaran comentarios top-level");
+    if (!apiDetails) throw new Error("No se capturó la API GraphQL de comentarios");
 
     const pageCookies = await page.cookies("https://www.instagram.com");
     const cookieStr   = pageCookies.map((c) => `${c.name}=${c.value}`).join("; ");
     const csrftoken   = pageCookies.find((c) => c.name === "csrftoken")?.value || "";
 
-    return { ...apiDetails, cookieStr, csrftoken, replyApiDetails };
+    return { ...apiDetails, cookieStr, csrftoken };
   } finally {
     page.off("response", onResponse);
   }
 }
 
-// ── Extraer comentarios + metadata de replies pendientes ─────────────────────
+// ── Extraer comentarios + IDs de comentarios con replies pendientes ──────────
 function extractEdgesWithMeta(edges) {
-  const comments      = [];
+  const comments       = [];
   const pendingReplies = [];
 
   (edges || []).forEach(({ node }) => {
     if (!node) return;
     const username = node?.user?.username || node?.owner?.username;
     const text     = node?.text;
-    const id       = node?.id || node?.pk;
+    // Preferir pk (numerico) — es el ID que usa la REST API de replies
+    const id = node?.pk || node?.id;
     if (username && text && text.trim()) comments.push({ id, user: username, comment: text.trim() });
 
-    // Replies inline que Instagram incluye (normalmente 3-5)
+    // Replies inline que ya vienen con la respuesta top-level
     const repliesConn = node?.edge_media_to_parent_comment || node?.edge_threaded_comments || node?.replies;
     const replyEdges  = repliesConn?.edges || [];
     replyEdges.forEach(({ node: r }) => {
       if (!r) return;
       const ru = r?.user?.username || r?.owner?.username;
       const rt = r?.text;
-      const ri = r?.id || r?.pk;
+      const ri = r?.pk || r?.id;
       if (ru && rt && rt.trim()) comments.push({ id: ri, user: ru, comment: rt.trim() });
     });
 
-    // Marcar si hay mas replies a paginar
+    // Si hay mas replies que las inline, marcar para paginar via REST
     const rpi = repliesConn?.page_info;
-    if (rpi?.has_next_page && rpi?.end_cursor && id) {
-      pendingReplies.push({ commentId: id, cursor: rpi.end_cursor });
+    if (rpi?.has_next_page && id) {
+      pendingReplies.push(id);
     }
   });
 
@@ -325,45 +291,38 @@ function parsePage(data) {
   };
 }
 
-// ── Paginar todas las replies de un comentario ───────────────────────────────
-async function fetchAllReplies(replyApiDetails, nodeHeaders, commentId, startCursor) {
-  const baseParams = new URLSearchParams(replyApiDetails.postData);
-  const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
-  const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
+// ── Obtener todas las replies de un comentario via REST (sin doc_id) ─────────
+// Endpoint: GET https://i.instagram.com/api/v1/media/{comment_pk}/replies/
+async function fetchAllReplies(restHeaders, commentId) {
+  const replies = [];
+  let minId   = null; // cursor de paginacion
+  let hasMore = true;
+  let retries = 0;
+  let page    = 0;
 
-  const replies  = [];
-  let cursor     = startCursor;
-  let hasMore    = true;
-  let retries    = 0;
+  while (hasMore) {
+    const path = `/api/v1/media/${commentId}/replies/?can_support_threading=true${minId ? `&min_id=${encodeURIComponent(minId)}` : ""}`;
+    const result = await nodeGet("i.instagram.com", path, restHeaders);
 
-  while (hasMore && cursor) {
-    const vars = { ...baseVars, comment_id: commentId, after: cursor };
-    const body = new URLSearchParams();
-    body.set("variables", JSON.stringify(vars));
-    if (docId) body.set("doc_id", docId);
-
-    const result = await nodePost(replyApiDetails.url, nodeHeaders, body.toString());
-
-    if (!result?.data) {
+    if (!result || result.status !== "ok") {
       if (retries < 2) { retries++; await sleep(retries * 4000); continue; }
       break;
     }
     retries = 0;
+    page++;
 
-    const conn  = Object.values(result.data)[0];
-    if (!conn) break;
-
-    (conn.edges || []).forEach(({ node }) => {
-      if (!node) return;
-      const username = node?.user?.username || node?.owner?.username;
-      const text     = node?.text;
-      const id       = node?.id || node?.pk;
+    (result.comments || []).forEach((c) => {
+      const username = c?.user?.username;
+      const text     = c?.text;
+      const id       = c?.pk || c?.id;
       if (username && text && text.trim()) replies.push({ id, user: username, comment: text.trim() });
     });
 
-    hasMore = conn.page_info?.has_next_page ?? false;
-    cursor  = conn.page_info?.end_cursor   ?? null;
-    await sleepRand(600, 1400);
+    hasMore = !!(result.has_more_tail_comments || result.next_min_id);
+    minId   = result.next_min_id ?? null;
+    if (!minId) hasMore = false;
+
+    await sleepRand(500, 1200);
   }
 
   return replies;
@@ -379,6 +338,7 @@ async function scrapeComments(url, fromCursor = null) {
   const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
   const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
 
+  // Headers para GraphQL (comentarios top-level)
   const nodeHeaders = {
     "content-type":     "application/x-www-form-urlencoded",
     "cookie":           api.cookieStr,
@@ -391,8 +351,18 @@ async function scrapeComments(url, fromCursor = null) {
     "referer":          url.trim().replace(/[\r\n\t]/g, ""),
   };
 
+  // Headers para REST (replies) — i.instagram.com no necesita referer ni ajax
+  const restHeaders = {
+    "x-ig-app-id":    nodeHeaders["x-ig-app-id"],
+    "x-csrftoken":    api.csrftoken,
+    "x-ig-www-claim": nodeHeaders["x-ig-www-claim"],
+    "user-agent":     MOBILE_UA,
+    "cookie":         api.cookieStr,
+    "accept":         "*/*",
+  };
+
   const allComments    = [];
-  const allPendingReplies = [];
+  const allPendingReplies = new Set(); // Set para evitar duplicados de commentId
   let hasNextPage, endCursor, pageNum;
 
   if (fromCursor) {
@@ -403,10 +373,10 @@ async function scrapeComments(url, fromCursor = null) {
   } else {
     const first = parsePage(api.data);
     allComments.push(...first.comments);
-    allPendingReplies.push(...first.pendingReplies);
+    first.pendingReplies.forEach((id) => allPendingReplies.add(id));
     hasNextPage = first.hasNextPage;
     endCursor   = first.endCursor;
-    console.log(`Pagina 1: ${first.comments.length} | total ${allComments.length} | replies pendientes: ${allPendingReplies.length} | more: ${hasNextPage}`);
+    console.log(`Pagina 1: ${first.comments.length} | total ${allComments.length} | comentarios con replies: ${allPendingReplies.size} | more: ${hasNextPage}`);
     pageNum = 2;
   }
 
@@ -414,7 +384,7 @@ async function scrapeComments(url, fromCursor = null) {
   let pagesThisRun = 0;
   const limit      = MAX_PAGES > 0 ? MAX_PAGES : Infinity;
 
-  // ── Fase 1: comentarios top-level ─────────────────────────────────────────
+  // ── Fase 1: comentarios top-level via GraphQL ─────────────────────────────
   while (hasNextPage && endCursor && pagesThisRun < limit) {
     const vars = { ...baseVars, after: endCursor };
     const body = new URLSearchParams();
@@ -438,11 +408,11 @@ async function scrapeComments(url, fromCursor = null) {
     retries = 0;
     const pg = parsePage(result);
     allComments.push(...pg.comments);
-    allPendingReplies.push(...pg.pendingReplies);
+    pg.pendingReplies.forEach((id) => allPendingReplies.add(id));
     hasNextPage = pg.hasNextPage;
     endCursor   = pg.endCursor;
     pagesThisRun++;
-    console.log(`Pagina ${pageNum}: +${pg.comments.length} | total ${allComments.length} | replies pendientes: ${allPendingReplies.length} | more: ${hasNextPage}`);
+    console.log(`Pagina ${pageNum}: +${pg.comments.length} | total ${allComments.length} | comentarios con replies: ${allPendingReplies.size} | more: ${hasNextPage}`);
     pageNum++;
 
     if (pagesThisRun % 20 === 0) {
@@ -457,22 +427,23 @@ async function scrapeComments(url, fromCursor = null) {
     console.log(`Limite de ${MAX_PAGES} paginas — continuara en el proximo intervalo`);
   }
 
-  console.log(`Fase 1 completa: ${allComments.length} comentarios top-level | ${allPendingReplies.length} comentarios con replies pendientes`);
+  const pendingArray = [...allPendingReplies];
+  console.log(`Fase 1 completa: ${allComments.length} comentarios top-level | ${pendingArray.length} con replies a paginar`);
 
-  // ── Fase 2: replies de cada comentario ────────────────────────────────────
-  if (api.replyApiDetails && allPendingReplies.length > 0) {
-    console.log(`Fase 2: paginando replies de ${allPendingReplies.length} comentarios...`);
-    let replyGroupsDone = 0;
+  // ── Fase 2: replies via REST (i.instagram.com) — no necesita doc_id ───────
+  if (pendingArray.length > 0) {
+    console.log(`Fase 2: paginando replies de ${pendingArray.length} comentarios via REST...`);
+    let done = 0;
 
-    for (const { commentId, cursor } of allPendingReplies) {
-      const replies = await fetchAllReplies(api.replyApiDetails, nodeHeaders, commentId, cursor);
+    for (const commentId of pendingArray) {
+      const replies = await fetchAllReplies(restHeaders, commentId);
       allComments.push(...replies);
-      replyGroupsDone++;
+      done++;
 
-      if (replyGroupsDone % 10 === 0) {
-        console.log(`Replies: ${replyGroupsDone}/${allPendingReplies.length} comentarios procesados | total acumulado: ${allComments.length}`);
+      if (done % 10 === 0) {
+        console.log(`Replies: ${done}/${pendingArray.length} procesados | total acumulado: ${allComments.length}`);
       }
-      if (replyGroupsDone % 50 === 0) {
+      if (done % 50 === 0) {
         console.log("Pausa anti-deteccion (replies)...");
         await sleepRand(5000, 10000);
       }
