@@ -10,29 +10,22 @@ const MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) Appl
 
 const sleep     = (ms) => new Promise((r) => setTimeout(r, ms));
 const sleepRand = (min, max) => sleep(Math.floor(Math.random() * (max - min + 1)) + min);
-const MAX_PAGES = parseInt(process.env.MAX_PAGES || "0"); // 0 = sin limite
+const MAX_PAGES = parseInt(process.env.MAX_PAGES || "0");
 
 let browser = null;
 let page    = null;
 
-// ── HTTP POST (GraphQL) ───────────────────────────────────────────────────────
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 function nodePost(url, headers, body) {
   return new Promise((resolve) => {
     const u = new URL(url);
     const req = https.request(
-      {
-        hostname: u.hostname,
-        path:     u.pathname + (u.search || ""),
-        method:   "POST",
-        headers:  { ...headers, "content-length": Buffer.byteLength(body) },
-      },
+      { hostname: u.hostname, path: u.pathname + (u.search || ""), method: "POST",
+        headers: { ...headers, "content-length": Buffer.byteLength(body) } },
       (res) => {
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-          catch (_) { resolve(null); }
-        });
+        res.on("end", () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString())); } catch (_) { resolve(null); } });
       }
     );
     req.on("error", () => resolve(null));
@@ -41,22 +34,15 @@ function nodePost(url, headers, body) {
   });
 }
 
-// ── HTTP GET (REST API) ───────────────────────────────────────────────────────
 function nodeGet(hostname, path, headers) {
   return new Promise((resolve) => {
     const req = https.request(
       { hostname, path, method: "GET", headers },
       (res) => {
-        // Seguir redirecciones simples
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return resolve(null);
-        }
+        if (res.statusCode === 301 || res.statusCode === 302) return resolve(null);
         const chunks = [];
         res.on("data", (c) => chunks.push(c));
-        res.on("end", () => {
-          try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-          catch (_) { resolve(null); }
-        });
+        res.on("end", () => { try { resolve({ _status: res.statusCode, ...JSON.parse(Buffer.concat(chunks).toString()) }); } catch (_) { resolve(null); } });
       }
     );
     req.on("error", () => resolve(null));
@@ -64,85 +50,68 @@ function nodeGet(hostname, path, headers) {
   });
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Browser helpers ───────────────────────────────────────────────────────────
 async function dismissDialogs() {
   try {
-    const btns = await page.$$("button");
-    for (const btn of btns) {
-      const text  = await page.evaluate((el) => el.textContent || "", btn);
-      const lower = text.toLowerCase();
-      if (lower.includes("not now") || lower.includes("ahora no") || lower.includes("maybe later") || lower.includes("skip")) {
-        await btn.click();
-        await sleep(600);
-      }
+    for (const btn of await page.$$("button")) {
+      const t = (await page.evaluate((el) => el.textContent || "", btn)).toLowerCase();
+      if (["not now","ahora no","maybe later","skip"].some((d) => t.includes(d))) { await btn.click(); await sleep(600); }
     }
   } catch (_) {}
 }
 
 async function acceptCookies() {
   try {
-    const btns = await page.$$("button");
-    for (const btn of btns) {
-      const text = await page.evaluate((el) => el.textContent || "", btn);
-      if (text.includes("Allow all cookies") || text.includes("Aceptar todas las cookies") || text.includes("Accept")) {
-        await btn.click();
-        await sleep(1500);
-        return;
-      }
+    for (const btn of await page.$$("button")) {
+      const t = await page.evaluate((el) => el.textContent || "", btn);
+      if (["Allow all cookies","Aceptar todas las cookies","Accept"].some((d) => t.includes(d))) { await btn.click(); await sleep(1500); return; }
     }
   } catch (_) {}
 }
 
 async function login() {
-  console.log("Iniciando sesion en Instagram...");
+  console.log("Iniciando sesion...");
   await page.goto("https://www.instagram.com/accounts/login/", { waitUntil: "domcontentloaded", timeout: 30000 });
   await sleep(4000);
   await acceptCookies();
   await sleep(2000);
 
-  const selectors = ['input[name="username"]', 'input[aria-label*="username"]', 'form input[type="text"]', 'input[type="text"]'];
+  const selectors = ['input[name="username"]','input[aria-label*="username"]','form input[type="text"]','input[type="text"]'];
   let userInput = null;
   for (const sel of selectors) { userInput = await page.$(sel); if (userInput) break; }
-  if (!userInput) throw new Error("No se encontro el input de usuario");
-
+  if (!userInput) throw new Error("No se encontro input de usuario");
   await userInput.click({ clickCount: 3 });
   await userInput.type(IG_USERNAME, { delay: 80 });
   await sleep(300);
 
   const passInput = await page.$('input[name="password"]') || await page.$('input[type="password"]');
-  if (!passInput) throw new Error("No se encontro el input de password");
+  if (!passInput) throw new Error("No se encontro input de password");
   await passInput.click({ clickCount: 3 });
   await passInput.type(IG_PASSWORD, { delay: 80 });
   await sleep(300);
 
   const clicked = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button, div[role="button"], [type="submit"]')]
-      .find((el) => { const t = (el.textContent || "").trim().toLowerCase(); return t === "log in" || t === "iniciar sesión" || t === "ingresar"; });
-    if (btn) { btn.click(); return true; }
-    return false;
+    const btn = [...document.querySelectorAll('button,div[role="button"],[type="submit"]')]
+      .find((el) => { const t = (el.textContent||"").trim().toLowerCase(); return t==="log in"||t==="iniciar sesión"||t==="ingresar"; });
+    if (btn) { btn.click(); return true; } return false;
   });
   if (!clicked) await passInput.press("Enter");
-
   await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
   await sleep(3000);
   for (let i = 0; i < 3; i++) { await dismissDialogs(); await sleep(800); }
-
   const finalUrl = page.url();
-  if (finalUrl.includes("/accounts/login") || finalUrl.includes("/challenge") || finalUrl.includes("/suspended")) {
+  if (finalUrl.includes("/accounts/login") || finalUrl.includes("/challenge") || finalUrl.includes("/suspended"))
     throw new Error("Login fallido. URL: " + finalUrl);
-  }
   console.log("Login completado");
 }
 
 async function initBrowser() {
   console.log("Iniciando browser...");
-  const headless = process.env.HEADLESS !== "false" ? "new" : false;
-
   browser = await puppeteer.launch({
-    headless,
+    headless: process.env.HEADLESS !== "false" ? "new" : false,
     executablePath: process.env.CHROME_PATH || puppeteer.executablePath(),
     protocolTimeout: 300_000,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled", "--disable-gpu", "--no-zygote", "--disable-extensions", "--no-first-run"],
+    args: ["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-blink-features=AutomationControlled","--disable-gpu","--no-zygote","--disable-extensions","--no-first-run"],
   });
 
   page = await browser.newPage();
@@ -152,23 +121,22 @@ async function initBrowser() {
 
   if (process.env.IG_COOKIES) {
     try {
-      const valid = ["Strict", "Lax", "None"];
-      const cookies = JSON.parse(process.env.IG_COOKIES).map(c => { const cl = { ...c }; if (!valid.includes(cl.sameSite)) delete cl.sameSite; return cl; });
+      const valid = ["Strict","Lax","None"];
+      const cookies = JSON.parse(process.env.IG_COOKIES).map(c => { const cl={...c}; if(!valid.includes(cl.sameSite)) delete cl.sameSite; return cl; });
       await page.setCookie(...cookies);
       console.log(`Sesion restaurada via cookies (${cookies.length} cookies)`);
-    } catch (e) { console.error("Error al cargar IG_COOKIES:", e.message); }
+    } catch (e) { console.error("Error cargando IG_COOKIES:", e.message); }
   } else if (IG_USERNAME && IG_PASSWORD) {
     await login();
   }
 
   await page.setUserAgent(MOBILE_UA);
   await page.setViewport({ width: 390, height: 844, isMobile: true, hasTouch: true });
-
   browser.on("disconnected", () => { console.log("Browser desconectado"); browser = null; page = null; });
   console.log("Browser listo y sesion activa");
 }
 
-// ── Capturar API GraphQL de comentarios top-level ────────────────────────────
+// ── Capturar API GraphQL de comentarios ───────────────────────────────────────
 async function captureApiDetails(url) {
   let apiDetails = null;
 
@@ -178,7 +146,6 @@ async function captureApiDetails(url) {
       const data = await response.json().catch(() => null);
       if (!data?.data) return;
       const keys = Object.keys(data.data);
-      // Solo la API de comentarios top-level (no replies)
       if (!keys.some((k) => k.includes("comment") && !k.includes("repl"))) return;
       const req = response.request();
       apiDetails = { url: response.url(), postData: req.postData() || "", reqHeaders: req.headers(), data };
@@ -187,30 +154,25 @@ async function captureApiDetails(url) {
   };
 
   page.on("response", onResponse);
-
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(2000);
-
     if (!page.url().includes("/p/")) throw new Error(`Sesion invalida — redirigido a ${page.url()}. Renovar IG_COOKIES.`);
 
     await page.evaluate(() => {
-      const dismiss = ["not now", "ahora no", "maybe later", "skip", "cancel", "omitir"];
-      document.querySelectorAll("button, [role='button']").forEach((btn) => {
-        if (dismiss.some((d) => (btn.textContent || "").toLowerCase().includes(d))) btn.click();
+      ["not now","ahora no","maybe later","skip","cancel","omitir"].forEach((d) => {
+        document.querySelectorAll("button,[role='button']").forEach((b) => { if ((b.textContent||"").toLowerCase().includes(d)) b.click(); });
       });
     });
     await sleep(800);
 
     const clicked = await page.evaluate(() => {
-      const btn = [...document.querySelectorAll("a, button, span, [role='button']")].find((el) => {
-        const t = (el.textContent || "").toLowerCase();
-        return t.includes("ver los") || (t.includes("ver") && t.includes("comentario")) || (t.includes("view") && t.includes("comment"));
+      const btn = [...document.querySelectorAll("a,button,span,[role='button']")].find((el) => {
+        const t = (el.textContent||"").toLowerCase();
+        return t.includes("ver los") || (t.includes("ver")&&t.includes("comentario")) || (t.includes("view")&&t.includes("comment"));
       });
-      if (btn) { btn.click(); return true; }
-      return false;
+      if (btn) { btn.click(); return true; } return false;
     });
-
     if (clicked) {
       await page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 10000 }).catch(() => {});
     } else {
@@ -220,7 +182,7 @@ async function captureApiDetails(url) {
     await sleep(1500);
     console.log("URL comentarios:", page.url());
 
-    const client   = await page.target().createCDPSession();
+    const client = await page.target().createCDPSession();
     const deadline = Date.now() + 20000;
     while (!apiDetails && Date.now() < deadline) {
       await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 195, y: 600, id: 0 }] });
@@ -232,47 +194,73 @@ async function captureApiDetails(url) {
       await sleep(1200);
     }
     await client.detach().catch(() => {});
-
     if (!apiDetails) throw new Error("No se capturó la API GraphQL de comentarios");
 
     const pageCookies = await page.cookies("https://www.instagram.com");
     const cookieStr   = pageCookies.map((c) => `${c.name}=${c.value}`).join("; ");
     const csrftoken   = pageCookies.find((c) => c.name === "csrftoken")?.value || "";
-
     return { ...apiDetails, cookieStr, csrftoken };
   } finally {
     page.off("response", onResponse);
   }
 }
 
-// ── Extraer comentarios + IDs de comentarios con replies pendientes ──────────
+// ── Extraer comentarios e IDs con replies del nodo GraphQL ───────────────────
+// Soporta múltiples formatos del API v1 de Instagram
+let _firstNodeLogged = false;
+
 function extractEdgesWithMeta(edges) {
   const comments       = [];
   const pendingReplies = [];
 
   (edges || []).forEach(({ node }) => {
     if (!node) return;
+
+    // Loguear estructura del primer nodo para diagnóstico
+    if (!_firstNodeLogged) {
+      _firstNodeLogged = true;
+      const allKeys = Object.keys(node);
+      const replyKeys = allKeys.filter((k) => /repl|child|thread/i.test(k));
+      console.log(`[DIAG] Campos del nodo: [${allKeys.join(", ")}]`);
+      console.log(`[DIAG] Campos de replies: [${replyKeys.join(", ") || "ninguno"}]`);
+      if (node.reply_count !== undefined)   console.log(`[DIAG] reply_count = ${node.reply_count}`);
+      if (node.child_comment_count !== undefined) console.log(`[DIAG] child_comment_count = ${node.child_comment_count}`);
+    }
+
     const username = node?.user?.username || node?.owner?.username;
     const text     = node?.text;
-    // Preferir pk (numerico) — es el ID que usa la REST API de replies
-    const id = node?.pk || node?.id;
-    if (username && text && text.trim()) comments.push({ id, user: username, comment: text.trim() });
+    const pk       = node?.pk || node?.id; // pk es el ID numérico para REST
+    if (username && text && text.trim()) comments.push({ id: pk, user: username, comment: text.trim() });
 
-    // Replies inline que ya vienen con la respuesta top-level
-    const repliesConn = node?.edge_media_to_parent_comment || node?.edge_threaded_comments || node?.replies;
-    const replyEdges  = repliesConn?.edges || [];
-    replyEdges.forEach(({ node: r }) => {
+    // Replies inline (formatos varios)
+    const repliesConn  = node?.edge_media_to_parent_comment || node?.edge_threaded_comments || node?.replies;
+    const inlineEdges  = repliesConn?.edges || [];
+    const inlineArr    = node?.preview_child_comments || []; // v1 REST format
+
+    inlineEdges.forEach(({ node: r }) => {
       if (!r) return;
       const ru = r?.user?.username || r?.owner?.username;
       const rt = r?.text;
       const ri = r?.pk || r?.id;
       if (ru && rt && rt.trim()) comments.push({ id: ri, user: ru, comment: rt.trim() });
     });
+    inlineArr.forEach((r) => {
+      if (!r) return;
+      const ru = r?.user?.username;
+      const rt = r?.text;
+      const ri = r?.pk || r?.id;
+      if (ru && rt && rt.trim()) comments.push({ id: ri, user: ru, comment: rt.trim() });
+    });
 
-    // Si hay mas replies que las inline, marcar para paginar via REST
-    const rpi = repliesConn?.page_info;
-    if (rpi?.has_next_page && id) {
-      pendingReplies.push(id);
+    // Detectar si hay replies que paginar — cubrir TODOS los formatos posibles
+    const explicitCount =
+      (typeof node?.reply_count        === "number" ? node.reply_count        : 0) +
+      (typeof node?.child_comment_count === "number" ? node.child_comment_count : 0);
+    const hasInline     = inlineEdges.length > 0 || inlineArr.length > 0;
+    const hasNextPage   = repliesConn?.page_info?.has_next_page ?? false;
+
+    if ((explicitCount > 0 || hasInline || hasNextPage) && pk) {
+      pendingReplies.push(pk);
     }
   });
 
@@ -291,46 +279,63 @@ function parsePage(data) {
   };
 }
 
-// ── Obtener todas las replies de un comentario via REST (sin doc_id) ─────────
-// Endpoint: GET https://i.instagram.com/api/v1/media/{comment_pk}/replies/
+// ── Fetch de replies via REST — sin doc_id ───────────────────────────────────
+// Prueba dos endpoints conocidos de Instagram para replies
+let _firstReplyLogged = false;
+
 async function fetchAllReplies(restHeaders, commentId) {
   const replies = [];
-  let minId   = null; // cursor de paginacion
-  let hasMore = true;
-  let retries = 0;
-  let page    = 0;
+  let cursor   = null;
+  let hasMore  = true;
+  let retries  = 0;
+  let pageNum  = 0;
 
   while (hasMore) {
-    const path = `/api/v1/media/${commentId}/replies/?can_support_threading=true${minId ? `&min_id=${encodeURIComponent(minId)}` : ""}`;
-    const result = await nodeGet("i.instagram.com", path, restHeaders);
+    const qs   = `can_support_threading=true${cursor ? `&min_id=${encodeURIComponent(cursor)}` : ""}`;
+    const path = `/api/v1/media/${commentId}/replies/?${qs}`;
+    const res  = await nodeGet("i.instagram.com", path, restHeaders);
 
-    if (!result || result.status !== "ok") {
-      if (retries < 2) { retries++; await sleep(retries * 4000); continue; }
+    // Loguear primera respuesta para diagnóstico
+    if (!_firstReplyLogged) {
+      _firstReplyLogged = true;
+      if (res) {
+        const keys = Object.keys(res).filter((k) => k !== "_status");
+        console.log(`[DIAG] REST replies status=${res._status} keys=[${keys.join(", ")}] comments=${res.comments?.length ?? "N/A"}`);
+      } else {
+        console.log(`[DIAG] REST replies: null (endpoint no responde)`);
+      }
+    }
+
+    if (!res || res._status >= 400) {
+      if (retries < 2) { retries++; await sleep(retries * 5000); continue; }
       break;
     }
     retries = 0;
-    page++;
+    pageNum++;
 
-    (result.comments || []).forEach((c) => {
-      const username = c?.user?.username;
-      const text     = c?.text;
-      const id       = c?.pk || c?.id;
-      if (username && text && text.trim()) replies.push({ id, user: username, comment: text.trim() });
+    (res.comments || []).forEach((c) => {
+      const u = c?.user?.username;
+      const t = c?.text;
+      const i = c?.pk || c?.id;
+      if (u && t && t.trim()) replies.push({ id: i, user: u, comment: t.trim() });
     });
 
-    hasMore = !!(result.has_more_tail_comments || result.next_min_id);
-    minId   = result.next_min_id ?? null;
-    if (!minId) hasMore = false;
+    cursor  = res.next_min_id || null;
+    hasMore = !!(cursor || res.has_more_tail_comments);
+    if (!cursor) hasMore = false;
 
-    await sleepRand(500, 1200);
+    if (hasMore) await sleepRand(400, 900);
   }
 
   return replies;
 }
 
-// ── Scrape principal ─────────────────────────────────────────────────────────
+// ── Scrape principal ──────────────────────────────────────────────────────────
 async function scrapeComments(url, fromCursor = null) {
   if (!browser || !page || page.isClosed()) await initBrowser();
+
+  _firstNodeLogged  = false; // reset diagnóstico por run
+  _firstReplyLogged = false;
 
   const api = await captureApiDetails(url);
 
@@ -338,8 +343,8 @@ async function scrapeComments(url, fromCursor = null) {
   const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
   const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
 
-  // Headers para GraphQL (comentarios top-level)
-  const nodeHeaders = {
+  // Headers GraphQL (top-level)
+  const gqlHeaders = {
     "content-type":     "application/x-www-form-urlencoded",
     "cookie":           api.cookieStr,
     "x-ig-app-id":      api.reqHeaders["x-ig-app-id"]      || "936619743392459",
@@ -351,18 +356,19 @@ async function scrapeComments(url, fromCursor = null) {
     "referer":          url.trim().replace(/[\r\n\t]/g, ""),
   };
 
-  // Headers para REST (replies) — i.instagram.com no necesita referer ni ajax
+  // Headers REST (replies) — mismo app-id, sin referer ni ajax
   const restHeaders = {
-    "x-ig-app-id":    nodeHeaders["x-ig-app-id"],
+    "x-ig-app-id":    gqlHeaders["x-ig-app-id"],
     "x-csrftoken":    api.csrftoken,
-    "x-ig-www-claim": nodeHeaders["x-ig-www-claim"],
+    "x-ig-www-claim": gqlHeaders["x-ig-www-claim"],
     "user-agent":     MOBILE_UA,
     "cookie":         api.cookieStr,
-    "accept":         "*/*",
+    "accept":         "application/json",
+    "accept-language":"en-US,en;q=0.9",
   };
 
-  const allComments    = [];
-  const allPendingReplies = new Set(); // Set para evitar duplicados de commentId
+  const allComments       = [];
+  const pendingRepliesSet = new Set();
   let hasNextPage, endCursor, pageNum;
 
   if (fromCursor) {
@@ -373,10 +379,10 @@ async function scrapeComments(url, fromCursor = null) {
   } else {
     const first = parsePage(api.data);
     allComments.push(...first.comments);
-    first.pendingReplies.forEach((id) => allPendingReplies.add(id));
+    first.pendingReplies.forEach((id) => pendingRepliesSet.add(String(id)));
     hasNextPage = first.hasNextPage;
     endCursor   = first.endCursor;
-    console.log(`Pagina 1: ${first.comments.length} | total ${allComments.length} | comentarios con replies: ${allPendingReplies.size} | more: ${hasNextPage}`);
+    console.log(`Pag 1: +${first.comments.length} | total ${allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
     pageNum = 2;
   }
 
@@ -384,75 +390,65 @@ async function scrapeComments(url, fromCursor = null) {
   let pagesThisRun = 0;
   const limit      = MAX_PAGES > 0 ? MAX_PAGES : Infinity;
 
-  // ── Fase 1: comentarios top-level via GraphQL ─────────────────────────────
+  // ── Fase 1: top-level via GraphQL ─────────────────────────────────────────
   while (hasNextPage && endCursor && pagesThisRun < limit) {
-    const vars = { ...baseVars, after: endCursor };
     const body = new URLSearchParams();
-    body.set("variables", JSON.stringify(vars));
+    body.set("variables", JSON.stringify({ ...baseVars, after: endCursor }));
     if (docId) body.set("doc_id", docId);
 
-    const result = await nodePost(api.url, nodeHeaders, body.toString());
+    const result = await nodePost(api.url, gqlHeaders, body.toString());
 
     if (!result?.data) {
-      if (retries < 3) {
-        retries++;
-        const wait = retries * 5000;
-        console.log(`Pagina ${pageNum}: sin datos — reintentando en ${wait / 1000}s (${retries}/3)...`);
-        await sleep(wait);
-        continue;
-      }
-      console.log(`Pagina ${pageNum}: sin datos tras 3 reintentos, deteniendo`);
+      if (retries < 3) { retries++; console.log(`Pag ${pageNum}: sin datos — retry ${retries}/3 en ${retries*5}s`); await sleep(retries * 5000); continue; }
+      console.log(`Pag ${pageNum}: 3 reintentos fallidos — deteniendo Fase 1`);
       break;
     }
 
     retries = 0;
     const pg = parsePage(result);
     allComments.push(...pg.comments);
-    pg.pendingReplies.forEach((id) => allPendingReplies.add(id));
+    pg.pendingReplies.forEach((id) => pendingRepliesSet.add(String(id)));
     hasNextPage = pg.hasNextPage;
     endCursor   = pg.endCursor;
     pagesThisRun++;
-    console.log(`Pagina ${pageNum}: +${pg.comments.length} | total ${allComments.length} | comentarios con replies: ${allPendingReplies.size} | more: ${hasNextPage}`);
+
+    if (pagesThisRun % 50 === 0 || !hasNextPage) {
+      console.log(`Pag ${pageNum}: +${pg.comments.length} | total ${allComments.length} | con replies: ${pendingRepliesSet.size} | more: ${hasNextPage}`);
+    }
     pageNum++;
 
-    if (pagesThisRun % 20 === 0) {
-      console.log("Pausa anti-deteccion...");
-      await sleepRand(5000, 10000);
-    } else {
-      await sleepRand(800, 2000);
-    }
+    await (pagesThisRun % 20 === 0 ? sleepRand(5000, 10000) : sleepRand(700, 1800));
   }
 
-  if (MAX_PAGES > 0 && pagesThisRun >= MAX_PAGES && hasNextPage) {
-    console.log(`Limite de ${MAX_PAGES} paginas — continuara en el proximo intervalo`);
-  }
+  const pendingArray = [...pendingRepliesSet];
+  console.log(`\nFase 1 completa: ${allComments.length} top-level | ${pendingArray.length} comentarios con replies pendientes`);
 
-  const pendingArray = [...allPendingReplies];
-  console.log(`Fase 1 completa: ${allComments.length} comentarios top-level | ${pendingArray.length} con replies a paginar`);
+  if (MAX_PAGES > 0 && pagesThisRun >= MAX_PAGES && hasNextPage)
+    console.log(`Limite MAX_PAGES=${MAX_PAGES} alcanzado — reanudar en proximo intervalo`);
 
-  // ── Fase 2: replies via REST (i.instagram.com) — no necesita doc_id ───────
+  // ── Fase 2: replies via REST ───────────────────────────────────────────────
   if (pendingArray.length > 0) {
-    console.log(`Fase 2: paginando replies de ${pendingArray.length} comentarios via REST...`);
-    let done = 0;
+    console.log(`Fase 2: obteniendo replies de ${pendingArray.length} comentarios...`);
+    let done       = 0;
+    let totalFound = 0;
 
     for (const commentId of pendingArray) {
       const replies = await fetchAllReplies(restHeaders, commentId);
       allComments.push(...replies);
+      totalFound += replies.length;
       done++;
 
-      if (done % 10 === 0) {
-        console.log(`Replies: ${done}/${pendingArray.length} procesados | total acumulado: ${allComments.length}`);
+      if (done % 25 === 0 || done === pendingArray.length) {
+        console.log(`Replies: ${done}/${pendingArray.length} | replies encontradas: ${totalFound} | total acumulado: ${allComments.length}`);
       }
-      if (done % 50 === 0) {
-        console.log("Pausa anti-deteccion (replies)...");
-        await sleepRand(5000, 10000);
-      }
+      if (done % 100 === 0) await sleepRand(8000, 15000);
+      else if (done % 20 === 0) await sleepRand(4000, 8000);
     }
 
-    console.log(`Fase 2 completa: ${allComments.length} comentarios totales (top-level + replies)`);
+    console.log(`Fase 2 completa: ${totalFound} replies obtenidas | total final: ${allComments.length}`);
   }
 
-  console.log(`Total final: ${allComments.length} comentarios | cursor: ${endCursor ? "si" : "no"}`);
+  console.log(`\n=== TOTAL FINAL: ${allComments.length} comentarios | cursor: ${endCursor ? "si" : "no"} ===`);
   return { comments: allComments, lastCursor: endCursor };
 }
 
