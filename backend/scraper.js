@@ -4,9 +4,22 @@ const puppeteer = require("puppeteer");
 const https     = require("https");
 
 const IG_USERNAME = process.env.IG_USERNAME;
-const IG_PASSWORD = process.env.IG_PASSWORD;
+const IG_PASSWORD = (process.env.IG_PASSWORD || "").trim();
 const DESKTOP_UA  = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 const MOBILE_UA   = "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1";
+
+// Convierte shortcode de URL (/p/XXXX) a ID numérico del media
+function shortcodeToId(s) {
+  const alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  let id = 0n;
+  for (const c of s) id = id * 64n + BigInt(alpha.indexOf(c));
+  return id.toString();
+}
+function extractShortcode(url) {
+  const m = url.trim().match(/\/p\/([A-Za-z0-9_-]+)/);
+  if (!m) throw new Error("No shortcode en URL: " + url);
+  return m[1];
+}
 
 const sleep     = (ms) => new Promise((r) => setTimeout(r, ms));
 const sleepRand = (min, max) => sleep(Math.floor(Math.random() * (max - min + 1)) + min);
@@ -312,6 +325,10 @@ async function scrapeComments(url, fromCursor = null, onBatch = null) {
   const baseVars   = JSON.parse(baseParams.get("variables") || "{}");
   const docId      = baseParams.get("doc_id") || baseParams.get("query_hash");
 
+  // Pedir más comentarios por página para reducir número de peticiones
+  if (baseVars.first !== undefined) baseVars.first = 50;
+  if (baseVars.count !== undefined) baseVars.count = 50;
+
   const gqlHeaders = {
     "content-type":     "application/x-www-form-urlencoded",
     "cookie":           api.cookieStr,
@@ -402,11 +419,71 @@ async function scrapeComments(url, fromCursor = null, onBatch = null) {
     await (pagesThisRun % 20 === 0 ? sleepRand(5000, 9000) : sleepRand(700, 1600));
   }
 
-  // Flush any remaining top-level comments before Phase 2
+  // Flush GraphQL restante
   await flush(endCursor);
+  console.log(`\nFase 1a (GraphQL) completa | ${pendingRepliesSet.size} con replies`);
+
+  // ── Fase 1b: REST /api/v1/media/{id}/comments/ ────────────────────────────
+  // El endpoint REST usa un cursor min_id independiente del GraphQL.
+  // Instagram lo usa en su app para cargar TODOS los comentarios.
+  // Con las mismas cookies del browser evitamos el 467 que daba instagram-private-api.
+  // Paramos SOLO cuando next_min_id desaparece (no nos fiamos de has_more_comments).
+  console.log("\nFase 1b: REST endpoint (cobertura completa)...");
+  const mediaId   = shortcodeToId(extractShortcode(url));
+  let restMinId   = null;
+  let restPage    = 1;
+  let restRetries = 0;
+
+  while (true) {
+    const qs      = `can_support_threading=true${restMinId ? `&min_id=${encodeURIComponent(restMinId)}` : ""}`;
+    const restRes = await nodeGet("www.instagram.com", `/api/v1/media/${mediaId}/comments/?${qs}`, restHeaders);
+
+    if (!restRes || restRes._status >= 400 || !Array.isArray(restRes.comments)) {
+      if (restRetries < 3) {
+        restRetries++;
+        console.log(`REST Pág ${restPage}: status=${restRes?._status ?? "null"} — retry ${restRetries}/3 en ${restRetries * 8}s`);
+        await sleep(restRetries * 8000);
+        continue;
+      }
+      console.log(`REST Pág ${restPage}: error persistente — fin Fase 1b`);
+      break;
+    }
+    restRetries = 0;
+
+    const restParsed = [];
+    (restRes.comments || []).forEach((c) => {
+      if (c.user?.username && c.text) {
+        restParsed.push({ id: String(c.pk), user: c.user.username, comment: c.text.trim() });
+      }
+      (c.preview_child_comments || []).forEach((r) => {
+        if (r.user?.username && r.text)
+          restParsed.push({ id: String(r.pk), user: r.user.username, comment: r.text.trim() });
+      });
+      const previewCount = c.preview_child_comments?.length || 0;
+      if ((c.child_comment_count || 0) > previewCount && c.pk)
+        pendingRepliesSet.add(String(c.pk));
+    });
+
+    stash(restParsed);
+    pagesSinceCheckpoint++;
+
+    const nextMinId = restRes.next_min_id || null;
+    if (restPage % 50 === 0 || !nextMinId)
+      console.log(`REST Pág ${restPage}: +${restParsed.length} | has_more: ${restRes.has_more_comments} | next_min_id: ${nextMinId ? "si" : "NO"}`);
+
+    if (pagesSinceCheckpoint >= CHECKPOINT_PAGES) await flush(nextMinId || endCursor);
+
+    if (!nextMinId) { console.log("REST: sin next_min_id — paginación completa"); break; }
+    restMinId = nextMinId;
+    restPage++;
+    await (restPage % 20 === 0 ? sleepRand(5000, 9000) : sleepRand(700, 1600));
+  }
+
+  await flush(endCursor);
+  console.log(`Fase 1b completa: ${restPage} páginas REST`);
 
   const pendingArray = [...pendingRepliesSet];
-  console.log(`\nFase 1 completa | ${pendingArray.length} con replies (child_comment_count > 0)`);
+  console.log(`\nTotal replies pendientes: ${pendingArray.length}`);
 
   // ── Fase 2: replies (solo si hay comentarios con replies) ─────────────────
   if (pendingArray.length > 0) {

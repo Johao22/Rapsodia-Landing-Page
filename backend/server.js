@@ -28,12 +28,12 @@ let totalComments    = 0;
 let isScrapingActive = false;
 
 // ── Store persistente ────────────────────────────────────────────────────────
-let store = { userCounts: {}, lastCursor: null, seenIds: {} };
+let store = { userCounts: {}, lastCursor: null, seenIds: {}, sorteoEligible: {} };
 
 function loadStore() {
   try {
     const saved = JSON.parse(fs.readFileSync(STORE_FILE, "utf8"));
-    store = { userCounts: {}, lastCursor: null, seenIds: {}, ...saved };
+    store = { userCounts: {}, lastCursor: null, seenIds: {}, sorteoEligible: {}, ...saved };
     buildRanking();
     console.log(`Store cargado: ${Object.keys(store.userCounts).length} usuarios | cursor: ${store.lastCursor ? "si" : "no"}`);
   } catch (_) {
@@ -69,8 +69,13 @@ function buildRanking() {
   lastUpdate    = new Date().toISOString();
 }
 
+// Cuenta menciones @usuario en el texto de un comentario
+function countMentions(text) {
+  return (text.match(/@[\w.]+/g) || []).length;
+}
+
 function mergeComments(newComments, isFullScrape) {
-  if (isFullScrape) { store.userCounts = {}; store.seenIds = {}; }
+  if (isFullScrape) { store.userCounts = {}; store.seenIds = {}; store.sorteoEligible = {}; }
 
   let added = 0;
   let dupes  = 0;
@@ -81,7 +86,10 @@ function mergeComments(newComments, isFullScrape) {
       if (store.seenIds[c.id]) { dupes++; return; }
       store.seenIds[c.id] = 1;
     }
-    store.userCounts[c.user.trim()] = (store.userCounts[c.user.trim()] || 0) + 1;
+    const user = c.user.trim();
+    store.userCounts[user] = (store.userCounts[user] || 0) + 1;
+    // Elegible para sorteo: al menos 2 @menciones en el comentario
+    if (countMentions(c.comment) >= 2) store.sorteoEligible[user] = 1;
     added++;
   });
 
@@ -102,8 +110,9 @@ async function runScrape() {
 
   // Para scrape completo, resetear store ANTES de empezar para no mezclar con datos viejos
   if (isFullScrape) {
-    store.userCounts = {};
-    store.seenIds    = {};
+    store.userCounts     = {};
+    store.seenIds        = {};
+    store.sorteoEligible = {};
     saveStore();
   }
 
@@ -171,6 +180,27 @@ app.get("/api/ranking.csv", (_req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", "attachment; filename=ranking.csv");
   res.sendFile(CSV_FILE);
+});
+
+// Sorteo: cantidad de participantes elegibles (>= 2 menciones en al menos 1 comentario)
+app.get("/api/sorteo/eligible", (_req, res) => {
+  const eligible = Object.keys(store.sorteoEligible || {});
+  res.json({ eligible: eligible.length });
+});
+
+// Sorteo: seleccionar 5 ganadores aleatorios entre los elegibles
+app.get("/api/sorteo", (_req, res) => {
+  const eligible = Object.keys(store.sorteoEligible || {});
+  if (eligible.length < 5) {
+    return res.json({ ok: false, message: `Solo hay ${eligible.length} participante(s) elegible(s). Se necesitan al menos 5.`, eligible: eligible.length });
+  }
+  // Fisher-Yates shuffle
+  const arr = [...eligible];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  res.json({ ok: true, winners: arr.slice(0, 5), eligible: eligible.length });
 });
 
 // Forzar scrape completo (resetea cursor)

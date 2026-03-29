@@ -458,10 +458,196 @@
     .refresh-btn:hover        { border-color: var(--gold); color: var(--gold); }
     .refresh-btn:disabled     { opacity: 0.4; cursor: not-allowed; }
 
+    /* ── Sorteo Section ── */
+    .sorteo-section {
+      margin: 48px 0 12px;
+      padding: 32px 24px 28px;
+      background: linear-gradient(135deg, rgba(124,58,237,0.07) 0%, rgba(212,160,23,0.05) 100%);
+      border: 1px solid rgba(124,58,237,0.22);
+      border-radius: 20px;
+    }
+
+    .sorteo-section-title {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.5rem;
+      font-weight: 900;
+      text-align: center;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      background: linear-gradient(135deg, #a855f7 0%, #d4a017 60%, #a855f7 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 6px;
+      filter: drop-shadow(0 0 14px rgba(168,85,247,0.25));
+    }
+
+    .sorteo-eligible-count {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.78rem;
+      margin-bottom: 28px;
+    }
+
+    .sorteo-eligible-count strong { color: var(--purple-light); font-size: 1rem; }
+
+    .sorteo-condition-note {
+      text-align: center;
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 24px;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Winner cards ── */
+    .sorteo-cards {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 28px;
+    }
+
+    .winner-card {
+      width: 116px;
+      height: 158px;
+      perspective: 900px;
+      cursor: default;
+    }
+
+    .winner-card-inner {
+      width: 100%;
+      height: 100%;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.75s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    .winner-card.revealed .winner-card-inner {
+      transform: rotateY(180deg);
+    }
+
+    .winner-card-front,
+    .winner-card-back {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .winner-card-front {
+      background: var(--surface2);
+      border: 1px solid rgba(124,58,237,0.28);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+
+    .winner-card-front .q-mark {
+      font-size: 2.8rem;
+      animation: qpulse 2.2s ease-in-out infinite;
+      display: block;
+    }
+
+    .winner-card-front .card-num {
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(168,85,247,0.5);
+    }
+
+    @keyframes qpulse {
+      0%,100% { opacity: 0.45; transform: scale(0.95); }
+      50%      { opacity: 1;    transform: scale(1.08); }
+    }
+
+    .winner-card-back {
+      transform: rotateY(180deg);
+      border: 1px solid rgba(212,160,23,0.4);
+      box-shadow: 0 0 24px rgba(212,160,23,0.12);
+    }
+
+    .winner-card-back img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      opacity: 0.55;
+    }
+
+    .winner-card-back .w-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, transparent 30%, rgba(0,0,0,0.88) 100%);
+    }
+
+    .winner-card-back .w-badge {
+      position: absolute;
+      top: 7px; right: 8px;
+      font-size: 1.1rem;
+      filter: drop-shadow(0 0 4px rgba(212,160,23,0.7));
+    }
+
+    .winner-card-back .w-num {
+      position: absolute;
+      top: 8px; left: 10px;
+      font-size: 0.58rem;
+      font-weight: 700;
+      color: rgba(255,255,255,0.45);
+      letter-spacing: 1px;
+    }
+
+    .winner-card-back .w-name {
+      position: absolute;
+      bottom: 0; left: 0; right: 0;
+      padding: 8px 7px 10px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: #fff;
+      text-align: center;
+      word-break: break-all;
+      line-height: 1.3;
+    }
+
+    .winner-card-back .w-name::before {
+      content: "@";
+      color: var(--gold-light);
+    }
+
+    /* ── Sorteo button ── */
+    .sorteo-btn-wrap { text-align: center; }
+
+    .sorteo-btn {
+      display: inline-block;
+      padding: 13px 38px;
+      background: linear-gradient(135deg, #6d28d9, #9333ea);
+      border: none;
+      border-radius: 100px;
+      color: #fff;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+      box-shadow: 0 4px 22px rgba(124,58,237,0.35);
+    }
+
+    .sorteo-btn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 32px rgba(124,58,237,0.55);
+    }
+
+    .sorteo-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
     /* ── Responsive ── */
     @media (max-width: 500px) {
       .podium { grid-template-columns: 1fr; }
       .stats-divider { display: none; }
+      .winner-card { width: 100px; height: 136px; }
     }
   </style>
 </head>
@@ -530,6 +716,13 @@
     </div>
   </div>
 
+  <!-- ── Sorteo ── -->
+  <div class="sorteo-section">
+    <div class="sorteo-section-title">✦ Ganadores ✦</div>
+    <p class="sorteo-condition-note">Condición: comentario con 2 o más @menciones</p>
+    <div class="sorteo-cards" id="sorteo-cards"></div>
+  </div>
+
 </main>
 
 <footer>
@@ -589,6 +782,7 @@
     refreshBtn.textContent = "↻ Actualizar ahora";
     renderRanking(ranking || []);
     updateStats(ranking || [], total, lastUpdate);
+    updateSorteoCount();
   });
 
   socket.on("scrape_error", () => {
@@ -646,6 +840,40 @@
     </div>`;
   }
 
+  // ── Sorteo ──────────────────────────────────────────────────────────────────
+  const SORTEO_IMGS = [
+    "src/_MG_9459.jpg","src/_MG_9462.jpg","src/_MG_9503.jpg","src/_MG_9575.jpg",
+    "src/_MG_9584.jpg","src/_MG_9589.jpg","src/_MG_9643.jpg","src/_MG_9718.jpg",
+  ];
+  const WINNERS = ["ericsonvilla", "luistanta_", "danny04_gm", "lilmaevev94", "alessio_qf"];
+
+  (function revealWinners() {
+    const container = document.getElementById("sorteo-cards");
+    container.innerHTML = "";
+    WINNERS.forEach((winner, i) => {
+      const div = document.createElement("div");
+      div.className = "winner-card";
+      div.id = "winner-card-" + i;
+      div.innerHTML = `
+        <div class="winner-card-inner">
+          <div class="winner-card-front">
+            <span class="q-mark">?</span>
+            <span class="card-num">Ganador ${i + 1}</span>
+          </div>
+          <div class="winner-card-back">
+            <img src="${SORTEO_IMGS[i % SORTEO_IMGS.length]}" alt="">
+            <div class="w-overlay"></div>
+            <span class="w-badge">🏆</span>
+            <span class="w-num">${i + 1}</span>
+            <div class="w-name">${winner}</div>
+          </div>
+        </div>`;
+      container.appendChild(div);
+      setTimeout(() => div.classList.add("revealed"), 600 + i * 750);
+    });
+  })();
+
+  // ── Ranking ─────────────────────────────────────────────────────────────────
   function renderRanking(data) {
     if (!data.length) {
       contentEl.innerHTML = `<div class="empty-state">
